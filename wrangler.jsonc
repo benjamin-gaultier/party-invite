@@ -13,8 +13,7 @@
     {
       "binding": "DB",
       "database_name": "party-invite",
-      // Replace with the id printed by `npx wrangler d1 create party-invite`.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "05210261-556e-4b0e-8a47-c6b6e30904be",
       "migrations_dir": "migrations"
     }
   ],

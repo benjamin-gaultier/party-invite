@@ -32,25 +32,20 @@ npm run smoke          # in a second terminal: end-to-end API checks
 npm run typecheck
 ```
 
-## Deploy to Cloudflare (first time)
+## Deploy to Cloudflare
 
-```sh
-npx wrangler login                       # opens the browser, log in to your Cloudflare account
-npx wrangler d1 create party-invite      # prints a database_id
-# paste that database_id into wrangler.jsonc (d1_databases[0].database_id)
-npm run deploy                           # applies migrations to the remote DB, then deploys
-```
+The production D1 database `party-invite` already exists (its id is in `wrangler.jsonc`)
+and has migration `0001_init.sql` applied.
 
-The app is then live at `https://party-invite.<your-subdomain>.workers.dev`.
-After that, `npm run deploy` is all you need.
+Deploys run through **Cloudflare Workers Builds**: in the Cloudflare dashboard,
+Workers & Pages → Create → Import a repository → `party-invite`, keep the default
+deploy command (`npx wrangler deploy`). Every push to `main` then goes live at
+`https://party-invite.<your-subdomain>.workers.dev`.
 
-### Deploying from CI instead
-
-Create a Cloudflare API token with the **Edit Cloudflare Workers** template plus
-**D1: Edit**, then set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` in the
-environment and run `npm run deploy`. Alternatively, connect the GitHub repo in the
-Cloudflare dashboard (Workers & Pages → Create → Import a repository) with deploy
-command `npm run deploy`.
+New migrations must be applied to the remote database before (or with) the deploy
+that needs them: `npm run db:migrate:remote` (needs `npx wrangler login`), or
+switch the Workers Builds deploy command to `npm run deploy`, which applies
+migrations and then deploys.
 
 ## API
 
