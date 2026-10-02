@@ -3,6 +3,8 @@
   "name": "party-invite",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
+  // Serve at https://party-invite.<subdomain>.workers.dev.
+  "workers_dev": true,
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
