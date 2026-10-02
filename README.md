@@ -51,9 +51,9 @@ migrations and then deploys.
 
 | Method | Path | Auth | What |
 | --- | --- | --- | --- |
-| POST | `/api/events` | none | Create event `{title, date, time?, address?, description?, hostName}` → `{eventId, guest:{id, token}}` |
-| GET | `/api/events/:id` | optional | With a valid token: `{event, me, guests}`. Without: `{preview}` for the join screen |
-| POST | `/api/events/:id/join` | none | `{name}` → `{guest:{id, token}}` |
-| PUT | `/api/events/:id/rsvp` | guest | `{status: going \| maybe \| not_going}` |
-| PATCH | `/api/events/:id/me` | guest | Rename yourself `{name}` |
-| PATCH | `/api/events/:id` | host | Edit event fields |
+| POST | `/api/parties` | none | Create event `{title, date, time?, address?, description?, hostName}` → `{eventId, guest:{id, token}}` |
+| GET | `/api/parties/:id` | optional | With a valid token: `{event, me, guests}`. Without: `{preview}` for the join screen |
+| POST | `/api/parties/:id/join` | none | `{name}` → `{guest:{id, token}}` |
+| PUT | `/api/parties/:id/rsvp` | guest | `{status: going \| maybe \| not_going}` |
+| PATCH | `/api/parties/:id/me` | guest | Rename yourself `{name}` |
+| PATCH | `/api/parties/:id` | host | Edit event fields |

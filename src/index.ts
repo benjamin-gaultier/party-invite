@@ -129,7 +129,7 @@ async function fullEvent(db: D1Database, event: EventRow, me: GuestRow) {
 // ---------- routes ----------
 
 // Host creates an event and becomes its first guest.
-app.post("/events", async (c) => {
+app.post("/parties", async (c) => {
   const b = await body(c);
   const event: EventRow = {
     id: randomId(),
@@ -152,7 +152,7 @@ app.post("/events", async (c) => {
 
 // Without a valid guest token: a teaser for the join screen.
 // With one: full event, guest list and who "me" is.
-app.get("/events/:id", async (c) => {
+app.get("/parties/:id", async (c) => {
   const event = await getEvent(c.env.DB, c.req.param("id"));
   const me = await currentGuest(c, event.id);
   if (me) return c.json(await fullEvent(c.env.DB, event, me));
@@ -169,7 +169,7 @@ app.get("/events/:id", async (c) => {
 });
 
 // Guest joins with just a name and gets a token back.
-app.post("/events/:id/join", async (c) => {
+app.post("/parties/:id/join", async (c) => {
   const event = await getEvent(c.env.DB, c.req.param("id"));
   const name = str((await body(c)).name, "name", LIMITS.name, true);
   const { stmt, guest } = await insertGuest(c.env.DB, event.id, name, false);
@@ -177,7 +177,7 @@ app.post("/events/:id/join", async (c) => {
   return c.json({ guest }, 201);
 });
 
-app.put("/events/:id/rsvp", async (c) => {
+app.put("/parties/:id/rsvp", async (c) => {
   const event = await getEvent(c.env.DB, c.req.param("id"));
   const me = await requireGuest(c, event.id);
   const status = (await body(c)).status;
@@ -189,7 +189,7 @@ app.put("/events/:id/rsvp", async (c) => {
 });
 
 // Rename yourself.
-app.patch("/events/:id/me", async (c) => {
+app.patch("/parties/:id/me", async (c) => {
   const event = await getEvent(c.env.DB, c.req.param("id"));
   const me = await requireGuest(c, event.id);
   const name = str((await body(c)).name, "name", LIMITS.name, true);
@@ -200,7 +200,7 @@ app.patch("/events/:id/me", async (c) => {
 });
 
 // Host edits event details.
-app.patch("/events/:id", async (c) => {
+app.patch("/parties/:id", async (c) => {
   const event = await getEvent(c.env.DB, c.req.param("id"));
   const me = await requireGuest(c, event.id);
   if (me.is_host !== 1) throw new HttpError(403, "Only the host can edit the event");
