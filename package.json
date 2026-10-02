@@ -1,0 +1,23 @@
+{
+  "name": "party-invite",
+  "version": "0.1.0",
+  "description": "Link-to-join mini social space for a party",
+  "scripts": {
+    "dev": "wrangler dev",
+    "db:migrate:local": "wrangler d1 migrations apply party-invite --local",
+    "db:migrate:remote": "wrangler d1 migrations apply party-invite --remote",
+    "deploy": "wrangler d1 migrations apply party-invite --remote && wrangler deploy",
+    "typecheck": "tsc",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "hono": "^4.13.12"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261002.1",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.147.0"
+  },
+  "private": true,
+  "type": "module"
+}
