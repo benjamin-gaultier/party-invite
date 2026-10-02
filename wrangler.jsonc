@@ -19,5 +19,17 @@
       "migrations_dir": "migrations"
     }
   ],
+  // Preview deployments (Workers Builds on non-main branches, `wrangler preview`)
+  // use their own database so they never touch production data.
+  "previews": {
+    "d1_databases": [
+      {
+        "binding": "DB",
+        "database_name": "party-invite-preview",
+        "database_id": "21d86b3e-9164-4dc0-9446-b75bb31877c6",
+        "migrations_dir": "migrations"
+      }
+    ]
+  },
   "observability": { "enabled": true }
 }
