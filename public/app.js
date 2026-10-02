@@ -47,7 +47,12 @@ async function api(path, { method = "GET", body, token } = {}) {
   const headers = {};
   if (body) headers["Content-Type"] = "application/json";
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(`/api${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  let res;
+  try {
+    res = await fetch(`/api${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  } catch {
+    throw new Error("Couldn't reach the server. Check your connection, or pause your ad blocker for this site.");
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const err = new Error(data.error || `Request failed (${res.status})`);
@@ -166,7 +171,7 @@ function renderHome() {
     ev.preventDefault();
     const data = Object.fromEntries(new FormData(form));
     withBusy(form.querySelector("button"), async () => {
-      const { eventId, guest } = await api("/events", { method: "POST", body: data });
+      const { eventId, guest } = await api("/parties", { method: "POST", body: data });
       setIdentity(eventId, {
         guestId: guest.id,
         token: guest.token,
@@ -187,7 +192,7 @@ async function renderEvent(eventId) {
   const identity = getIdentity(eventId);
   let data;
   try {
-    data = await api(`/events/${eventId}`, { token: identity?.token });
+    data = await api(`/parties/${eventId}`, { token: identity?.token });
   } catch (err) {
     return renderMessage(err.status === 404 ? "This event doesn't exist (or the link is incomplete)." : err.message);
   }
@@ -224,7 +229,7 @@ function renderJoin(eventId, preview) {
     ev.preventDefault();
     const name = new FormData(form).get("name").trim();
     withBusy(form.querySelector("button"), async () => {
-      const { guest } = await api(`/events/${eventId}/join`, { method: "POST", body: { name } });
+      const { guest } = await api(`/parties/${eventId}/join`, { method: "POST", body: { name } });
       setIdentity(eventId, { guestId: guest.id, token: guest.token, name, title: preview.title, date: preview.date, time: preview.time });
       renderEvent(eventId);
     });
@@ -307,7 +312,7 @@ function renderSpace(eventId, data) {
   for (const btn of app.querySelectorAll("[data-rsvp]")) {
     btn.addEventListener("click", () =>
       withBusy(btn, async () => {
-        const next = await api(`/events/${eventId}/rsvp`, { method: "PUT", body: { status: btn.dataset.rsvp }, token: identity.token });
+        const next = await api(`/parties/${eventId}/rsvp`, { method: "PUT", body: { status: btn.dataset.rsvp }, token: identity.token });
         renderSpace(eventId, next);
       }),
     );
@@ -317,7 +322,7 @@ function renderSpace(eventId, data) {
     const name = prompt("Your name", me.name)?.trim();
     if (!name || name === me.name) return;
     try {
-      renderSpace(eventId, await api(`/events/${eventId}/me`, { method: "PATCH", body: { name }, token: identity.token }));
+      renderSpace(eventId, await api(`/parties/${eventId}/me`, { method: "PATCH", body: { name }, token: identity.token }));
     } catch (err) {
       toast(err.message);
     }
@@ -370,7 +375,7 @@ function renderEdit(eventId, data) {
     ev.preventDefault();
     const body = Object.fromEntries(new FormData(form));
     withBusy(form.querySelector("button"), async () => {
-      renderSpace(eventId, await api(`/events/${eventId}`, { method: "PATCH", body, token: identity.token }));
+      renderSpace(eventId, await api(`/parties/${eventId}`, { method: "PATCH", body, token: identity.token }));
       toast("Saved");
     });
   });

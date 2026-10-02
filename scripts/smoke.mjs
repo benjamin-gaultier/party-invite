@@ -17,7 +17,7 @@ async function call(path, { method = "GET", body, token } = {}) {
   return { status: res.status, data: await res.json().catch(() => null) };
 }
 
-const created = await call("/events", {
+const created = await call("/parties", {
   method: "POST",
   body: { title: "Smoke party", date: "2030-06-01", time: "20:00", address: "1 Main St", hostName: "Host" },
 });
@@ -25,31 +25,31 @@ check("create event -> 201", created.status === 201);
 const { eventId, guest: host } = created.data;
 check("event id is long and unguessable", eventId.length >= 20);
 
-const preview = await call(`/events/${eventId}`);
+const preview = await call(`/parties/${eventId}`);
 check("anonymous GET returns preview only", preview.data.preview?.hostName === "Host" && !preview.data.guests);
 
-const joined = await call(`/events/${eventId}/join`, { method: "POST", body: { name: "Guest" } });
+const joined = await call(`/parties/${eventId}/join`, { method: "POST", body: { name: "Guest" } });
 check("join -> 201 with token", joined.status === 201 && joined.data.guest.token);
 const guest = joined.data.guest;
 
-const full = await call(`/events/${eventId}`, { token: guest.token });
+const full = await call(`/parties/${eventId}`, { token: guest.token });
 check("returning guest sees full event", full.data.me?.name === "Guest" && full.data.guests.length === 2);
 
-const rsvp = await call(`/events/${eventId}/rsvp`, { method: "PUT", body: { status: "going" }, token: guest.token });
+const rsvp = await call(`/parties/${eventId}/rsvp`, { method: "PUT", body: { status: "going" }, token: guest.token });
 check("rsvp going", rsvp.data.me?.rsvp === "going");
-check("bad rsvp rejected", (await call(`/events/${eventId}/rsvp`, { method: "PUT", body: { status: "yes" }, token: guest.token })).status === 400);
-check("rsvp without token rejected", (await call(`/events/${eventId}/rsvp`, { method: "PUT", body: { status: "going" } })).status === 401);
+check("bad rsvp rejected", (await call(`/parties/${eventId}/rsvp`, { method: "PUT", body: { status: "yes" }, token: guest.token })).status === 400);
+check("rsvp without token rejected", (await call(`/parties/${eventId}/rsvp`, { method: "PUT", body: { status: "going" } })).status === 401);
 
-check("guest cannot edit event", (await call(`/events/${eventId}`, { method: "PATCH", body: { title: "x" }, token: guest.token })).status === 403);
-const edited = await call(`/events/${eventId}`, { method: "PATCH", body: { title: "Renamed" }, token: host.token });
+check("guest cannot edit event", (await call(`/parties/${eventId}`, { method: "PATCH", body: { title: "x" }, token: guest.token })).status === 403);
+const edited = await call(`/parties/${eventId}`, { method: "PATCH", body: { title: "Renamed" }, token: host.token });
 check("host can edit event", edited.data.event?.title === "Renamed");
 
-const otherEvent = await call("/events", { method: "POST", body: { title: "Other", date: "2030-01-01", hostName: "X" } });
-const cross = await call(`/events/${otherEvent.data.eventId}`, { token: guest.token });
+const otherEvent = await call("/parties", { method: "POST", body: { title: "Other", date: "2030-01-01", hostName: "X" } });
+const cross = await call(`/parties/${otherEvent.data.eventId}`, { token: guest.token });
 check("token does not work on another event", !!cross.data.preview);
 
-check("unknown event -> 404", (await call("/events/nope")).status === 404);
-check("missing title -> 400", (await call("/events", { method: "POST", body: { date: "2030-01-01", hostName: "X" } })).status === 400);
+check("unknown event -> 404", (await call("/parties/nope")).status === 404);
+check("missing title -> 400", (await call("/parties", { method: "POST", body: { date: "2030-01-01", hostName: "X" } })).status === 400);
 
 const spa = await fetch(base + `/e/${eventId}`);
 check("event URL serves the app", spa.status === 200 && (await spa.text()).includes("app.js"));
