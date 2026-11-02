@@ -163,6 +163,33 @@ function extraFields(event = {}) {
       </fieldset>`;
 }
 
+// ---------- colors ----------
+// Must match COLORS in src/index.ts. "" is the default violet.
+const COLORS = {
+  "": { name: "Violet", light: "#7c3aed", dark: "#a78bfa", text: "#ffffff", darkText: "#120b22" },
+  metro: { name: "Jaune métro", light: "#b8860b", dark: "#ffcd00", text: "#1b1033", darkText: "#1b1033" },
+  bleu: { name: "Bleu RATP", light: "#0055c8", dark: "#5b9dff", text: "#ffffff", darkText: "#0b1430" },
+  vert: { name: "Vert", light: "#00814f", dark: "#3fcf8e", text: "#ffffff", darkText: "#06261a" },
+  rose: { name: "Rose", light: "#d6337a", dark: "#ff7eb6", text: "#ffffff", darkText: "#2d0a1a" },
+  rouge: { name: "Rouge", light: "#d12b2b", dark: "#ff6b6b", text: "#ffffff", darkText: "#2d0a0a" },
+  orange: { name: "Orange", light: "#e2690b", dark: "#ff9f43", text: "#ffffff", darkText: "#2d1600" },
+  nuit: { name: "Nuit", light: "#1b1033", dark: "#e9e4ff", text: "#ffffff", darkText: "#120b22" },
+};
+
+// Applies the event's color to buttons, highlights and the page tint.
+function applyColor(key) {
+  const style = document.body.style;
+  const color = key && COLORS[key];
+  for (const prop of ["--accent", "--accent-text", "--accent-soft", "--bg"]) style.removeProperty(prop);
+  if (!color) return;
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const accent = dark ? color.dark : color.light;
+  style.setProperty("--accent", accent);
+  style.setProperty("--accent-text", dark ? color.darkText : color.text);
+  style.setProperty("--accent-soft", `color-mix(in srgb, ${accent} 18%, var(--card))`);
+  style.setProperty("--bg", `color-mix(in srgb, ${accent} 9%, ${dark ? "#120b22" : "#ffffff"})`);
+}
+
 // ---------- background picture ----------
 
 function backgroundUrl(eventId, version) {
@@ -211,6 +238,22 @@ async function uploadBackground(eventId, token, blob) {
 
 // Organizer-only floating buttons on the event page: pick a photo / remove it.
 function setupBackgroundControl(eventId, token) {
+  const picker = document.getElementById("color-picker");
+  const open = document.getElementById("color-open");
+  open.addEventListener("click", () => {
+    picker.hidden = !picker.hidden;
+    open.setAttribute("aria-expanded", String(!picker.hidden));
+  });
+  picker.addEventListener("click", (ev) => {
+    const swatch = ev.target.closest("[data-color]");
+    if (!swatch) return;
+    applyColor(swatch.dataset.color); // instant preview
+    withBusy(swatch, async () => {
+      renderSpace(eventId, await api(`/parties/${eventId}/color`, { method: "PUT", body: { color: swatch.dataset.color }, token }));
+      toast("Couleurs mises à jour");
+    });
+  });
+
   const fileInput = document.getElementById("bg-file");
   const change = document.getElementById("bg-change");
   change.addEventListener("click", () => fileInput.click());
@@ -240,6 +283,7 @@ function setupBackgroundControl(eventId, token) {
 
 function renderHome() {
   setBackground(null, 0);
+  applyColor("");
   document.title = "Party Invite";
   const store = loadStore();
   const today = new Date().toISOString().slice(0, 10);
@@ -331,6 +375,7 @@ async function renderEvent(eventId) {
 
 function renderJoin(eventId, preview) {
   setBackground(eventId, preview.background_version);
+  applyColor(preview.color);
   document.title = `${preview.title} · Party Invite`;
   const store = loadStore();
   app.innerHTML = `
@@ -368,6 +413,7 @@ const RSVP_EMOJI = { going: "🥳", maybe: "🤔", not_going: "😢" };
 function renderSpace(eventId, data) {
   const { event, me, guests } = data;
   setBackground(eventId, event.background_version);
+  applyColor(event.color);
   const identity = getIdentity(eventId);
   // Keep the local copy fresh for "Your events".
   setIdentity(eventId, { name: me.name, title: event.title, date: event.date, time: event.time, justCreated: false });
@@ -449,7 +495,19 @@ function renderSpace(eventId, data) {
 
     ${
       me.isHost
-        ? `<div class="bg-control">
+        ? `<div class="color-picker" id="color-picker" hidden>
+            <p class="small"><strong>Couleurs de l'événement</strong></p>
+            <div class="swatches">
+              ${Object.entries(COLORS)
+                .map(
+                  ([key, c]) =>
+                    `<button class="swatch ${key === (event.color || "") ? "selected" : ""}" data-color="${key}" style="--swatch:${c.light}" aria-label="${esc(c.name)}" title="${esc(c.name)}"></button>`,
+                )
+                .join("")}
+            </div>
+          </div>
+          <div class="bg-control">
+            <button class="bg-fab" id="color-open" aria-expanded="false">🎨 Couleurs</button>
             ${event.background_version ? `<button class="bg-fab" id="bg-remove" aria-label="Retirer l'image de fond" title="Retirer l'image de fond">✕</button>` : ""}
             <button class="bg-fab" id="bg-change">🖼️ ${event.background_version ? "Changer le fond" : "Ajouter un fond"}</button>
             <input type="file" accept="image/*" id="bg-file" hidden>
@@ -770,6 +828,7 @@ function renderEdit(eventId, data) {
 
 function renderMessage(text) {
   setBackground(null, 0);
+  applyColor("");
   app.innerHTML = `<section class="card center stack"><div class="emoji">🤷</div><p>${esc(text)}</p><a class="btn primary" href="/">Créer un événement</a></section>`;
 }
 

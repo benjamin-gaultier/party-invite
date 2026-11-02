@@ -252,3 +252,30 @@ body.has-bg .hero {
 #bg-remove { padding: 10px 14px; }
 .container:has(.bg-control) { padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
 body:has(.bg-control) .toast { bottom: calc(80px + env(safe-area-inset-bottom)); }
+
+/* Organizer-only color picker, opened from the 🎨 button. */
+.color-picker {
+  position: fixed;
+  right: 16px;
+  bottom: calc(76px + env(safe-area-inset-bottom));
+  z-index: 6;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  max-width: calc(100% - 32px);
+}
+.color-picker[hidden] { display: none; }
+.color-picker p { margin: 0 0 8px; }
+.swatches { display: grid; grid-template-columns: repeat(4, 40px); gap: 10px; }
+.swatch {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--swatch);
+  border: 3px solid var(--card);
+  box-shadow: 0 0 0 1px var(--border);
+}
+.swatch.selected { box-shadow: 0 0 0 3px var(--text); }

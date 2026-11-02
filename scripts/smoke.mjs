@@ -84,6 +84,13 @@ check("second upload bumps version", (await (await putBg(host.token)).json()).ev
 const bgDel = await call(`/parties/${eventId}/background`, { method: "DELETE", token: host.token });
 check("host removes background", bgDel.data.event?.background_version === 0 && (await fetch(`${base}/api/parties/${eventId}/background`)).status === 404);
 
+// Event colors
+check("guest cannot change colors", (await call(`/parties/${eventId}/color`, { method: "PUT", body: { color: "metro" }, token: guest.token })).status === 403);
+check("unknown color rejected", (await call(`/parties/${eventId}/color`, { method: "PUT", body: { color: "#ff0000" }, token: host.token })).status === 400);
+const colored = await call(`/parties/${eventId}/color`, { method: "PUT", body: { color: "metro" }, token: host.token });
+check("host sets colors", colored.data.event?.color === "metro");
+check("join preview has the color", (await call(`/parties/${eventId}`)).data.preview?.color === "metro");
+
 const otherEvent = await call("/parties", { method: "POST", body: { title: "Other", date: "2030-01-01", hostName: "X" } });
 const cross = await call(`/parties/${otherEvent.data.eventId}`, { token: guest.token });
 check("token does not work on another event", !!cross.data.preview);

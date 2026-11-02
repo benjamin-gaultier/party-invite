@@ -23,6 +23,7 @@ type EventRow = {
   playlist_url: string;
   playlist_note: string;
   background_version?: number; // 0 or missing = no background picture
+  color?: string; // '' or missing = default colors
 };
 type GuestRow = {
   id: string;
@@ -120,7 +121,7 @@ async function body(c: Context<App>): Promise<Record<string, unknown>> {
 
 async function getEvent(db: D1Database, id: string): Promise<EventRow> {
   const row = await db
-    .prepare(`SELECT ${EVENT_COLS}, background_version FROM events WHERE id = ?`)
+    .prepare(`SELECT ${EVENT_COLS}, background_version, color FROM events WHERE id = ?`)
     .bind(id)
     .first<EventRow>();
   if (!row) throw new HttpError(404, "Événement introuvable");
@@ -248,7 +249,7 @@ app.get("/parties/:id", async (c) => {
     .bind(event.id)
     .first<{ host: string | null; going: number }>();
   return c.json({
-    preview: { title: event.title, date: event.date, time: event.time, theme: event.theme, background_version: event.background_version ?? 0, hostName: stats?.host, going: stats?.going ?? 0 },
+    preview: { title: event.title, date: event.date, time: event.time, theme: event.theme, background_version: event.background_version ?? 0, color: event.color ?? "", hostName: stats?.host, going: stats?.going ?? 0 },
   });
 });
 
@@ -358,6 +359,20 @@ app.delete("/parties/:id/comments/:commentId", async (c) => {
   if (row.guest_id !== me.id && me.is_host !== 1) throw new HttpError(403, "Vous ne pouvez supprimer que vos propres commentaires");
   await c.env.DB.prepare("DELETE FROM comments WHERE id = ?").bind(c.req.param("commentId")).run();
   return c.json({ comments: await listComments(c.env.DB, event.id) });
+});
+
+// ---------- colors ----------
+// Must match COLORS in public/app.js.
+const COLORS = ["", "metro", "bleu", "vert", "rose", "rouge", "orange", "nuit"];
+
+app.put("/parties/:id/color", async (c) => {
+  const event = await getEvent(c.env.DB, c.req.param("id"));
+  const me = await requireGuest(c, event.id);
+  if (me.is_host !== 1) throw new HttpError(403, "Seul l'hôte peut changer les couleurs");
+  const color = (await body(c)).color;
+  if (typeof color !== "string" || !COLORS.includes(color)) throw new HttpError(400, "Couleur inconnue");
+  await c.env.DB.prepare("UPDATE events SET color = ?, updated_at = datetime('now') WHERE id = ?").bind(color, event.id).run();
+  return c.json(await fullEvent(c.env, { ...event, color }, me));
 });
 
 // ---------- background picture ----------
