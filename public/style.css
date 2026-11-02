@@ -401,3 +401,4 @@ body.has-bg .card {
 .event-info p { margin: 0.35rem 0; }
 
 .card, .color-picker { color: var(--text); }
+.connect-box.highlight { border: 1px solid var(--accent); background: var(--accent-soft); }
