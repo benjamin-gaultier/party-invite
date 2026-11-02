@@ -341,6 +341,39 @@ app.patch("/parties/:id", async (c) => {
   return c.json(await fullEvent(c.env, next, me));
 });
 
+// A host or co-host deletes the event for everyone. Guests, comments, background,
+// Spotify link and song history go with it (ON DELETE CASCADE).
+app.delete("/parties/:id", async (c) => {
+  const event = await getEvent(c.env.DB, c.req.param("id"));
+  const me = await requireGuest(c, event.id);
+  if (me.is_host !== 1) throw new HttpError(403, "Seul l'hôte peut supprimer l'événement");
+  await c.env.DB.prepare("DELETE FROM events WHERE id = ?").bind(event.id).run();
+  return c.json({ deleted: true });
+});
+
+// "Mes événements": the browser sends the tokens it holds and gets back the events
+// they still open, with whether it hosts each one. Tokens of deleted events (or
+// unknown ones) are simply missing from the answer.
+app.post("/mine", async (c) => {
+  const tokens = (await body(c)).tokens;
+  if (!Array.isArray(tokens)) throw new HttpError(400, "tokens doit être une liste");
+  const clean = [...new Set(tokens.filter((t): t is string => typeof t === "string" && t.length > 0 && t.length <= 100))].slice(0, 90);
+  if (!clean.length) return c.json({ events: [] });
+  const hashes = await Promise.all(clean.map(sha256));
+  const { results } = await c.env.DB.prepare(
+    `SELECT e.id, e.title, e.date, e.time, g.is_host, g.rsvp,
+       (SELECT COUNT(*) FROM guests WHERE event_id = e.id AND rsvp = 'going') AS going
+     FROM guests g JOIN events e ON e.id = g.event_id
+     WHERE g.token_hash IN (${hashes.map(() => "?").join(", ")})
+     ORDER BY e.date, e.time`,
+  )
+    .bind(...hashes)
+    .all<{ id: string; title: string; date: string; time: string; is_host: number; rsvp: Rsvp | null; going: number }>();
+  return c.json({
+    events: results.map((r) => ({ id: r.id, title: r.title, date: r.date, time: r.time, isHost: r.is_host === 1, rsvp: r.rsvp, going: r.going })),
+  });
+});
+
 // ---------- comment wall ----------
 
 app.get("/parties/:id/comments", async (c) => {

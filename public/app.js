@@ -1,11 +1,11 @@
 // Party Invite frontend: no framework, no build step.
-// Routes: "/" (create an event + your events) and "/e/:id" (an event).
+// Routes: "/" (create an event), "/mes-evenements" (hosted + joined events) and "/e/:id" (an event).
 
 const app = document.getElementById("app");
 const STORE_KEY = "party-invite:v1";
 
 // ---------- local identity ----------
-// Per event we keep { guestId, token, name, title, date }. The token is what
+// Per event we keep { guestId, token, name, title, date, time, isHost }. The token is what
 // lets a returning guest skip the name step; the rest powers "Your events".
 
 function loadStore() {
@@ -395,22 +395,10 @@ function renderHome() {
   document.title = "Party Invite";
   const store = loadStore();
   const today = new Date().toISOString().slice(0, 10);
-  const mine = Object.entries(store.events)
-    .map(([id, e]) => ({ id, ...e }))
-    .sort((a, b) => (a.date || "").localeCompare(b.date || ""));
-  const upcoming = mine.filter((e) => !e.date || e.date >= today);
-  const past = mine.filter((e) => e.date && e.date < today).reverse();
-
-  const list = (items) =>
-    items
-      .map(
-        (e) => `<li><a class="event-link" href="/e/${esc(e.id)}">
-          <strong>${esc(e.title || "Événement sans titre")}</strong>
-          <span class="muted">${esc(formatWhen(e.date, e.time))}</span></a></li>`,
-      )
-      .join("");
+  const count = Object.keys(store.events).length;
 
   app.innerHTML = `
+    ${count ? `<nav class="topbar"><span></span><a href="/mes-evenements">📅 Mes événements <span class="count">${count}</span></a></nav>` : ""}
     <header class="hero">
       <div class="emoji">🎉</div>
       <h1>Organisez une soirée</h1>
@@ -438,8 +426,6 @@ function renderHome() {
       <button class="primary" type="submit">Créer l'événement et obtenir le lien</button>
     </form>
 
-    ${upcoming.length ? `<section class="stack"><h2>Vos prochains événements</h2><ul class="events">${list(upcoming)}</ul></section>` : ""}
-    ${past.length ? `<section class="stack"><h2>Événements passés</h2><ul class="events">${list(past)}</ul></section>` : ""}
   `;
 
   const form = document.getElementById("create");
@@ -455,11 +441,63 @@ function renderHome() {
         title: data.title.trim(),
         date: data.date,
         time: data.time,
+        isHost: true,
         justCreated: true,
       });
       navigate(`/e/${eventId}`);
     });
   });
+}
+
+// ---------- my events ----------
+
+function renderMine() {
+  setBackground(null, 0);
+  applyColor("");
+  document.title = "Mes événements · Party Invite";
+  const today = new Date().toISOString().slice(0, 10);
+
+  const draw = (events, offline = false) => {
+    const sorted = [...events].sort((a, b) => `${a.date} ${a.time || ""}`.localeCompare(`${b.date} ${b.time || ""}`));
+    const item = (e) => `<li><a class="event-link ${e.date && e.date < today ? "past" : ""}" href="/e/${esc(e.id)}">
+        <strong>${esc(e.title || "Événement sans titre")}</strong>
+        <span class="muted small">${esc(formatWhen(e.date, e.time))}${e.date && e.date >= today ? ` · ${esc(countdown(e.date))}` : ""}</span>
+        ${e.going ? `<span class="muted small">🥳 ${e.going} ${e.going > 1 ? "viennent" : "vient"}</span>` : ""}
+        ${!e.isHost && e.rsvp ? `<span class="small">${RSVP_EMOJI[e.rsvp]} ${RSVP_LABELS[e.rsvp]}</span>` : ""}
+      </a></li>`;
+    // Upcoming first (soonest on top), then past events (most recent on top).
+    const ordered = (list) => [...list.filter((e) => !e.date || e.date >= today), ...list.filter((e) => e.date && e.date < today).reverse()];
+    const section = (title, list, empty) => `<section class="stack">
+        <h2>${title} <span class="count">${list.length}</span></h2>
+        ${list.length ? `<ul class="events">${ordered(list).map(item).join("")}</ul>` : `<p class="muted small">${empty}</p>`}
+      </section>`;
+    app.innerHTML = `
+      <nav class="topbar"><a href="/">← Créer un événement</a></nav>
+      <header class="hero"><div class="emoji">📅</div><h1>Mes événements</h1>
+        <p class="muted small">Les événements que vous avez ouverts dans ce navigateur.</p></header>
+      ${offline ? `<p class="muted small center">Hors ligne : liste enregistrée sur cet appareil.</p>` : ""}
+      ${section("👑 J'organise", sorted.filter((e) => e.isHost), `Aucun pour l'instant. <a href="/">Créez un événement</a> !`)}
+      ${section("💌 Je suis invité·e", sorted.filter((e) => !e.isHost), "Quand quelqu'un vous envoie un lien et que vous le rejoignez, il apparaîtra ici.")}
+    `;
+  };
+
+  const store = loadStore();
+  const local = Object.entries(store.events).map(([id, e]) => ({ id, ...e }));
+  draw(local);
+  const tokens = local.map((e) => e.token).filter(Boolean);
+  if (!tokens.length) return;
+  api("/mine", { method: "POST", body: { tokens } })
+    .then(({ events }) => {
+      if (location.pathname !== "/mes-evenements") return;
+      // Forget events that were deleted (or whose token no longer works), refresh the rest.
+      const alive = new Set(events.map((e) => e.id));
+      for (const e of local) if (e.token && !alive.has(e.id)) forgetIdentity(e.id);
+      for (const e of events) setIdentity(e.id, { title: e.title, date: e.date, time: e.time, isHost: e.isHost });
+      draw(events);
+    })
+    .catch(() => {
+      if (location.pathname === "/mes-evenements") draw(local, true);
+    });
 }
 
 // ---------- event page ----------
@@ -507,7 +545,7 @@ function renderJoin(eventId, preview) {
     const name = new FormData(form).get("name").trim();
     withBusy(form.querySelector("button"), async () => {
       const { guest } = await api(`/parties/${eventId}/join`, { method: "POST", body: { name } });
-      setIdentity(eventId, { guestId: guest.id, token: guest.token, name, title: preview.title, date: preview.date, time: preview.time });
+      setIdentity(eventId, { guestId: guest.id, token: guest.token, name, title: preview.title, date: preview.date, time: preview.time, isHost: false });
       renderEvent(eventId);
     });
   });
@@ -522,7 +560,7 @@ function renderSpace(eventId, data) {
   applyColor(event.color);
   const identity = getIdentity(eventId);
   // Keep the local copy fresh for "Your events".
-  setIdentity(eventId, { name: me.name, title: event.title, date: event.date, time: event.time, justCreated: false });
+  setIdentity(eventId, { name: me.name, title: event.title, date: event.date, time: event.time, isHost: me.isHost, justCreated: false });
   document.title = `${event.title} · Party Invite`;
 
   const groups = { going: [], maybe: [], not_going: [], none: [] };
@@ -543,7 +581,7 @@ function renderSpace(eventId, data) {
       : "";
 
   app.innerHTML = `
-    <nav class="topbar"><a href="/">← Vos événements</a><span class="hello">${avatar(me.name, "sm")} Salut ${esc(me.name)} 👋</span></nav>
+    <nav class="topbar"><a href="/mes-evenements">← Mes événements</a><span class="hello">${avatar(me.name, "sm")} Salut ${esc(me.name)} 👋</span></nav>
 
     ${eventHero(
       eventId,
@@ -960,7 +998,23 @@ function renderEdit(eventId, data) {
       ${extraFields(event)}
       <button class="primary" type="submit">Enregistrer</button>
     </form>
+    <section class="card danger-zone stack">
+      <h2>Supprimer l'événement</h2>
+      <p class="muted small">L'événement disparaît pour tout le monde : invités, réponses, commentaires et fond. La playlist Spotify, elle, reste sur Spotify. C'est définitif.</p>
+      <button class="danger" id="delete-event">🗑️ Supprimer « ${esc(event.title)} »</button>
+    </section>
   `;
+  document.getElementById("delete-event").addEventListener("click", (ev) => {
+    const others = data.guests.length - 1;
+    const warning = `Supprimer « ${event.title} » pour tout le monde ?${others > 0 ? `\n\n${others} ${others > 1 ? "invités perdront" : "invité perdra"} l'accès.` : ""}\n\nCette action est définitive.`;
+    if (!confirm(warning)) return;
+    withBusy(ev.currentTarget, async () => {
+      await api(`/parties/${eventId}`, { method: "DELETE", token: identity.token });
+      forgetIdentity(eventId);
+      navigate("/mes-evenements");
+      toast("Événement supprimé");
+    });
+  });
   document.getElementById("back").addEventListener("click", (ev) => {
     ev.preventDefault();
     renderSpace(eventId, data);
@@ -991,7 +1045,7 @@ function route() {
   if (match) {
     spotifyRedirectNotice();
     renderEvent(match[1]);
-  }
+  } else if (/^\/mes-evenements\/?$/.test(location.pathname)) renderMine();
   else renderHome();
 }
 

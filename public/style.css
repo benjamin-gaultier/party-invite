@@ -145,6 +145,10 @@ button.link { background: none; border: none; padding: 0; color: var(--accent); 
   color: var(--text);
   text-decoration: none;
 }
+.event-link.past { opacity: 0.6; }
+
+.danger-zone { border-color: #e5484d55; }
+button.danger { background: #e5484d; border-color: #e5484d; color: #fff; }
 
 .toast {
   position: fixed;

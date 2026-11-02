@@ -109,6 +109,21 @@ const otherEvent = await call("/parties", { method: "POST", body: { title: "Othe
 const cross = await call(`/parties/${otherEvent.data.eventId}`, { token: guest.token });
 check("token does not work on another event", !!cross.data.preview);
 
+// My events + deletion
+const mine = await call("/mine", { method: "POST", body: { tokens: [host.token, otherEvent.data.guest.token, "bogus"] } });
+check("my events lists hosted events", mine.data.events?.length === 2 && mine.data.events.every((e) => e.isHost));
+const mineGuest = await call("/mine", { method: "POST", body: { tokens: [guest.token] } });
+check("my events marks joined events", mineGuest.data.events?.[0]?.id === eventId && mineGuest.data.events[0].isHost === false && mineGuest.data.events[0].rsvp === "going");
+check("my events rejects bad body", (await call("/mine", { method: "POST", body: { tokens: "x" } })).status === 400);
+check("guest cannot delete event", (await call(`/parties/${eventId}`, { method: "DELETE", token: guest.token })).status === 403);
+check("delete without token rejected", (await call(`/parties/${eventId}`, { method: "DELETE" })).status === 401);
+await call(`/parties/${eventId}/guests/${guest.id}/host`, { method: "PUT", body: { isHost: true }, token: host.token });
+const removed = await call(`/parties/${eventId}`, { method: "DELETE", token: guest.token });
+check("co-host deletes event", removed.status === 200 && removed.data.deleted === true);
+check("deleted event -> 404", (await call(`/parties/${eventId}`, { token: host.token })).status === 404);
+check("deleted event gone from my events", (await call("/mine", { method: "POST", body: { tokens: [host.token, guest.token] } })).data.events?.length === 0);
+check("other event untouched", (await call(`/parties/${otherEvent.data.eventId}`, { token: otherEvent.data.guest.token })).data.event?.title === "Other");
+
 check("unknown event -> 404", (await call("/parties/nope")).status === 404);
 check("missing title -> 400", (await call("/parties", { method: "POST", body: { date: "2030-01-01", hostName: "X" } })).status === 400);
 
