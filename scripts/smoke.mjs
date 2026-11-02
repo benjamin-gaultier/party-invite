@@ -90,6 +90,10 @@ check("unknown color rejected", (await call(`/parties/${eventId}/color`, { metho
 const colored = await call(`/parties/${eventId}/color`, { method: "PUT", body: { color: "metro" }, token: host.token });
 check("host sets colors", colored.data.event?.color === "metro");
 check("join preview has the color", (await call(`/parties/${eventId}`)).data.preview?.color === "metro");
+const custom = JSON.stringify({ accent: "#ff0066", bg: "#101010", card: "#202020" });
+check("host sets custom colors", (await call(`/parties/${eventId}/color`, { method: "PUT", body: { color: custom }, token: host.token })).data.event?.color === custom);
+check("bad custom colors rejected", (await call(`/parties/${eventId}/color`, { method: "PUT", body: { color: JSON.stringify({ accent: "red", bg: "#101010", card: "#202020" }) }, token: host.token })).status === 400);
+check("extra custom keys rejected", (await call(`/parties/${eventId}/color`, { method: "PUT", body: { color: JSON.stringify({ accent: "#ff0066", bg: "#101010", card: "#202020", x: "#000000" }) }, token: host.token })).status === 400);
 
 const otherEvent = await call("/parties", { method: "POST", body: { title: "Other", date: "2030-01-01", hostName: "X" } });
 const cross = await call(`/parties/${otherEvent.data.eventId}`, { token: guest.token });

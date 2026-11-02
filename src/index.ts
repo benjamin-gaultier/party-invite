@@ -363,14 +363,29 @@ app.delete("/parties/:id/comments/:commentId", async (c) => {
 
 // ---------- colors ----------
 // Must match COLORS in public/app.js.
-const COLORS = ["", "metro", "bleu", "vert", "rose", "rouge", "orange", "nuit"];
+const COLORS = ["", "metro", "bleu", "vert", "rose", "rouge", "orange", "nuit", "disco", "foret"];
+const HEX = /^#[0-9a-f]{6}$/i;
+
+// A preset name, or custom colors saved as JSON: {"accent":"#rrggbb","bg":"#rrggbb","card":"#rrggbb"}.
+function validColor(color: unknown): color is string {
+  if (typeof color !== "string") return false;
+  if (COLORS.includes(color)) return true;
+  if (color.length > 200 || !color.startsWith("{")) return false;
+  try {
+    const v = JSON.parse(color);
+    const keys = Object.keys(v);
+    return keys.length === 3 && ["accent", "bg", "card"].every((k) => typeof v[k] === "string" && HEX.test(v[k]));
+  } catch {
+    return false;
+  }
+}
 
 app.put("/parties/:id/color", async (c) => {
   const event = await getEvent(c.env.DB, c.req.param("id"));
   const me = await requireGuest(c, event.id);
   if (me.is_host !== 1) throw new HttpError(403, "Seul l'hôte peut changer les couleurs");
   const color = (await body(c)).color;
-  if (typeof color !== "string" || !COLORS.includes(color)) throw new HttpError(400, "Couleur inconnue");
+  if (!validColor(color)) throw new HttpError(400, "Couleur inconnue");
   await c.env.DB.prepare("UPDATE events SET color = ?, updated_at = datetime('now') WHERE id = ?").bind(color, event.id).run();
   return c.json(await fullEvent(c.env, { ...event, color }, me));
 });

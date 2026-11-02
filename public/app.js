@@ -232,30 +232,63 @@ function extraFields(event = {}) {
 }
 
 // ---------- colors ----------
-// Must match COLORS in src/index.ts. "" is the default violet.
+// Must match COLORS in src/index.ts. "" is the default violet (follows light/dark mode).
+// Each theme sets buttons/links (accent), the page background (bg) and the cards (card).
 const COLORS = {
-  "": { name: "Violet", light: "#7c3aed", dark: "#a78bfa", text: "#ffffff", darkText: "#120b22" },
-  metro: { name: "Jaune métro", light: "#b8860b", dark: "#ffcd00", text: "#1b1033", darkText: "#1b1033" },
-  bleu: { name: "Bleu RATP", light: "#0055c8", dark: "#5b9dff", text: "#ffffff", darkText: "#0b1430" },
-  vert: { name: "Vert", light: "#00814f", dark: "#3fcf8e", text: "#ffffff", darkText: "#06261a" },
-  rose: { name: "Rose", light: "#d6337a", dark: "#ff7eb6", text: "#ffffff", darkText: "#2d0a1a" },
-  rouge: { name: "Rouge", light: "#d12b2b", dark: "#ff6b6b", text: "#ffffff", darkText: "#2d0a0a" },
-  orange: { name: "Orange", light: "#e2690b", dark: "#ff9f43", text: "#ffffff", darkText: "#2d1600" },
-  nuit: { name: "Nuit", light: "#1b1033", dark: "#e9e4ff", text: "#ffffff", darkText: "#120b22" },
+  "": { name: "Violet", accent: "#7c3aed", bg: "#faf7ff", card: "#ffffff" },
+  metro: { name: "Métro la nuit", accent: "#ffcd00", bg: "#0f1d38", card: "#1a2b4f" },
+  bleu: { name: "Bleu RATP", accent: "#0055c8", bg: "#e6efff", card: "#ffffff" },
+  vert: { name: "Vert", accent: "#00814f", bg: "#e3f5ec", card: "#ffffff" },
+  rose: { name: "Rose", accent: "#d6337a", bg: "#ffe6f1", card: "#ffffff" },
+  rouge: { name: "Rouge", accent: "#d12b2b", bg: "#ffece8", card: "#ffffff" },
+  orange: { name: "Orange", accent: "#e2690b", bg: "#fff0e0", card: "#ffffff" },
+  nuit: { name: "Nuit", accent: "#a78bfa", bg: "#0f0a1e", card: "#1d1433" },
+  disco: { name: "Disco", accent: "#ff4fd8", bg: "#1a0b2e", card: "#2a1450" },
+  foret: { name: "Forêt", accent: "#e9c46a", bg: "#10241c", card: "#1b3a2d" },
 };
+const HEX = /^#[0-9a-f]{6}$/i;
 
-// Applies the event's color to buttons, highlights and the page tint.
-function applyColor(key) {
+// The saved value is a theme name, or custom colors as JSON {accent, bg, card}.
+function parseColor(value) {
+  if (!value) return null;
+  if (COLORS[value]) return COLORS[value];
+  try {
+    const c = JSON.parse(value);
+    if (["accent", "bg", "card"].every((k) => HEX.test(c[k]))) return c;
+  } catch {}
+  return null;
+}
+
+function isDark(hex) {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.5;
+}
+
+const COLOR_PROPS = ["--accent", "--accent-text", "--accent-soft", "--bg", "--card", "--text", "--muted", "--border", "--fill", "--page-text", "color-scheme"];
+
+// Applies the event's colors to the whole page; text colors are picked for contrast.
+function applyColor(value) {
   const style = document.body.style;
-  const color = key && COLORS[key];
-  for (const prop of ["--accent", "--accent-text", "--accent-soft", "--bg"]) style.removeProperty(prop);
-  if (!color) return;
-  const dark = matchMedia("(prefers-color-scheme: dark)").matches;
-  const accent = dark ? color.dark : color.light;
-  style.setProperty("--accent", accent);
-  style.setProperty("--accent-text", dark ? color.darkText : color.text);
-  style.setProperty("--accent-soft", `color-mix(in srgb, ${accent} 18%, var(--card))`);
-  style.setProperty("--bg", `color-mix(in srgb, ${accent} 9%, ${dark ? "#120b22" : "#ffffff"})`);
+  for (const prop of COLOR_PROPS) style.removeProperty(prop);
+  const c = parseColor(value);
+  if (!c) return;
+  const text = isDark(c.card) ? "#f3efff" : "#1b1033";
+  style.setProperty("--accent", c.accent);
+  style.setProperty("--accent-text", isDark(c.accent) ? "#ffffff" : "#1b1033");
+  style.setProperty("--accent-soft", `color-mix(in srgb, ${c.accent} 14%, ${c.card})`);
+  style.setProperty("--bg", c.bg);
+  style.setProperty("--card", c.card);
+  style.setProperty("--text", text);
+  style.setProperty("--muted", `color-mix(in srgb, ${text} 62%, ${c.card})`);
+  style.setProperty("--border", `color-mix(in srgb, ${text} 14%, ${c.card})`);
+  style.setProperty("--fill", `color-mix(in srgb, ${text} 5%, ${c.card})`);
+  style.setProperty("--page-text", isDark(c.bg) ? "#f3efff" : "#1b1033");
+  style.setProperty("color-scheme", isDark(c.card) ? "dark" : "light");
+}
+
+// Colors shown in the custom pickers: the saved ones, or the current theme's.
+function currentColors(value) {
+  return parseColor(value) || COLORS[""];
 }
 
 // ---------- background picture ----------
@@ -312,15 +345,22 @@ function setupBackgroundControl(eventId, token) {
     picker.hidden = !picker.hidden;
     open.setAttribute("aria-expanded", String(!picker.hidden));
   });
+  const save = (btn, color) =>
+    withBusy(btn, async () => {
+      renderSpace(eventId, await api(`/parties/${eventId}/color`, { method: "PUT", body: { color }, token }));
+      toast("Couleurs mises à jour");
+    });
   picker.addEventListener("click", (ev) => {
     const swatch = ev.target.closest("[data-color]");
     if (!swatch) return;
     applyColor(swatch.dataset.color); // instant preview
-    withBusy(swatch, async () => {
-      renderSpace(eventId, await api(`/parties/${eventId}/color`, { method: "PUT", body: { color: swatch.dataset.color }, token }));
-      toast("Couleurs mises à jour");
-    });
+    save(swatch, swatch.dataset.color);
   });
+  const inputs = [...picker.querySelectorAll("input[data-key]")];
+  const custom = () => JSON.stringify(Object.fromEntries(inputs.map((i) => [i.dataset.key, i.value.toLowerCase()])));
+  for (const input of inputs) input.addEventListener("input", () => applyColor(custom()));
+  const saveCustom = document.getElementById("color-save");
+  saveCustom.addEventListener("click", () => save(saveCustom, custom()));
 
   const fileInput = document.getElementById("bg-file");
   const change = document.getElementById("bg-change");
@@ -571,15 +611,29 @@ function renderSpace(eventId, data) {
     ${
       me.isHost
         ? `<div class="color-picker" id="color-picker" hidden>
-            <p class="small"><strong>Couleurs de l'événement</strong></p>
+            <p class="small"><strong>Thèmes</strong></p>
             <div class="swatches">
               ${Object.entries(COLORS)
                 .map(
                   ([key, c]) =>
-                    `<button class="swatch ${key === (event.color || "") ? "selected" : ""}" data-color="${key}" style="--swatch:${c.light}" aria-label="${esc(c.name)}" title="${esc(c.name)}"></button>`,
+                    `<button class="swatch ${key === (event.color || "") ? "selected" : ""}" data-color="${key}" style="--swatch:${c.accent};--swatch-bg:${c.bg}" aria-label="${esc(c.name)}" title="${esc(c.name)}"></button>`,
                 )
                 .join("")}
             </div>
+            <p class="small"><strong>Personnaliser</strong></p>
+            <div class="custom-colors">
+              ${[
+                ["accent", "Boutons et liens"],
+                ["bg", "Fond de la page"],
+                ["card", "Cartes"],
+              ]
+                .map(
+                  ([key, label]) =>
+                    `<label><input type="color" data-key="${key}" value="${currentColors(event.color)[key]}"> ${label}</label>`,
+                )
+                .join("")}
+            </div>
+            <button class="primary" id="color-save">Enregistrer mes couleurs</button>
           </div>
           <div class="bg-control">
             <button class="bg-fab" id="color-open" aria-expanded="false">🎨 Couleurs</button>
