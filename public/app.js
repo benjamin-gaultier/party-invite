@@ -209,6 +209,33 @@ async function uploadBackground(eventId, token, blob) {
   return data;
 }
 
+// Organizer-only floating buttons on the event page: pick a photo / remove it.
+function setupBackgroundControl(eventId, token) {
+  const fileInput = document.getElementById("bg-file");
+  const change = document.getElementById("bg-change");
+  change.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    withBusy(change, async () => {
+      change.textContent = "Envoi…";
+      try {
+        renderSpace(eventId, await uploadBackground(eventId, token, await resizeImage(file)));
+        toast("Image de fond mise à jour");
+      } finally {
+        change.textContent = "🖼️ Changer le fond";
+      }
+    });
+  });
+  document.getElementById("bg-remove")?.addEventListener("click", (ev) => {
+    if (!confirm("Retirer l'image de fond ?")) return;
+    withBusy(ev.currentTarget, async () => {
+      renderSpace(eventId, await api(`/parties/${eventId}/background`, { method: "DELETE", token }));
+      toast("Image de fond retirée");
+    });
+  });
+}
+
 // ---------- home: create event + your events ----------
 
 function renderHome() {
@@ -384,7 +411,7 @@ function renderSpace(eventId, data) {
       ${event.theme ? `<p class="theme"><span class="muted small">Thème</span><br>🎭 <strong>${esc(event.theme)}</strong></p>` : ""}
       ${event.address ? `<p>📍 <a href="${mapsUrl(event.address)}" target="_blank" rel="noopener">${esc(event.address)}</a></p>` : ""}
       ${event.description ? `<p class="description">${esc(event.description)}</p>` : ""}
-      ${me.isHost ? `<button class="link" id="edit">Modifier l'événement et l'image de fond</button>` : ""}
+      ${me.isHost ? `<button class="link" id="edit">Modifier les détails</button>` : ""}
     </section>
 
     <section class="card">
@@ -419,10 +446,21 @@ function renderSpace(eventId, data) {
     </section>
 
     <p class="center small"><button class="link" id="rename">Changer mon prénom</button></p>
+
+    ${
+      me.isHost
+        ? `<div class="bg-control">
+            ${event.background_version ? `<button class="bg-fab" id="bg-remove" aria-label="Retirer l'image de fond" title="Retirer l'image de fond">✕</button>` : ""}
+            <button class="bg-fab" id="bg-change">🖼️ ${event.background_version ? "Changer le fond" : "Ajouter un fond"}</button>
+            <input type="file" accept="image/*" id="bg-file" hidden>
+          </div>`
+        : ""
+    }
   `;
 
   setupComments(eventId, me, data.comments || [], identity.token);
   setupMusic(eventId, data, identity.token);
+  if (me.isHost) setupBackgroundControl(eventId, identity.token);
 
   for (const btn of app.querySelectorAll("[data-rsvp]")) {
     btn.addEventListener("click", () =>
@@ -473,7 +511,7 @@ function musicSection(event, me, spotify = {}) {
       : spotify.enabled
         ? `<div class="connect-box"><p class="small">Connectez votre compte Spotify pour que les invités ajoutent des chansons directement ici, même sans Spotify.</p>
              <button class="spotify-btn" id="spotify-connect">Connecter Spotify</button></div>`
-        : "";
+        : `<p class="muted small">🔌 Ajout de chansons depuis l'appli : les clés Spotify ne sont pas encore configurées sur le serveur (visible par l'hôte seulement).</p>`;
 
   if (!event.playlist_url && !spotify.connected) {
     if (!host) return "";
@@ -482,7 +520,7 @@ function musicSection(event, me, spotify = {}) {
           spotify.enabled
             ? hostControls + `<p class="muted small center">ou <button class="link small" id="add-playlist">collez le lien d'une playlist</button></p>`
             : `<p class="muted small">Ajoutez une playlist Spotify pour que les invités puissent l'écouter et y ajouter leurs chansons.</p>
-               <button id="add-playlist">Ajouter une playlist</button>`
+               <button id="add-playlist">Ajouter une playlist</button>${hostControls}`
         }</section>`;
   }
 
@@ -700,7 +738,6 @@ function setupComments(eventId, me, initial, token) {
 function renderEdit(eventId, data) {
   const { event } = data;
   const identity = getIdentity(eventId);
-  let current = data; // updated when the background picture changes
   app.innerHTML = `
     <nav class="topbar"><a href="/e/${esc(eventId)}" id="back">← Retour</a></nav>
     <form id="edit-form" class="card stack" autocomplete="off">
@@ -715,46 +752,11 @@ function renderEdit(eventId, data) {
       ${extraFields(event)}
       <button class="primary" type="submit">Enregistrer</button>
     </form>
-    <section class="card stack" id="bg-card"></section>
   `;
   document.getElementById("back").addEventListener("click", (ev) => {
     ev.preventDefault();
-    renderSpace(eventId, current);
+    renderSpace(eventId, data);
   });
-
-  const bgCard = document.getElementById("bg-card");
-  const drawBackgroundCard = () => {
-    const version = current.event.background_version;
-    bgCard.innerHTML = `
-      <h2>🖼️ Image de fond</h2>
-      <p class="muted small">Une photo derrière la page de l'événement, visible par tous les invités.</p>
-      ${version ? `<img class="bg-preview" src="${esc(backgroundUrl(eventId, version))}" alt="Image de fond actuelle">` : ""}
-      <label class="btn file-btn">${version ? "Changer la photo" : "Choisir une photo"}
-        <input type="file" accept="image/*" id="bg-file" hidden>
-      </label>
-      ${version ? `<button type="button" class="link small" id="bg-remove">Retirer l'image de fond</button>` : ""}`;
-    const fileInput = document.getElementById("bg-file");
-    fileInput.addEventListener("change", () => {
-      const file = fileInput.files[0];
-      if (!file) return;
-      withBusy(fileInput.closest("label"), async () => {
-        current = await uploadBackground(eventId, identity.token, await resizeImage(file));
-        setBackground(eventId, current.event.background_version);
-        drawBackgroundCard();
-        toast("Image de fond mise à jour");
-      });
-    });
-    document.getElementById("bg-remove")?.addEventListener("click", (ev) => {
-      if (!confirm("Retirer l'image de fond ?")) return;
-      withBusy(ev.currentTarget, async () => {
-        current = await api(`/parties/${eventId}/background`, { method: "DELETE", token: identity.token });
-        setBackground(eventId, 0);
-        drawBackgroundCard();
-        toast("Image de fond retirée");
-      });
-    });
-  };
-  drawBackgroundCard();
   const form = document.getElementById("edit-form");
   form.addEventListener("submit", (ev) => {
     ev.preventDefault();

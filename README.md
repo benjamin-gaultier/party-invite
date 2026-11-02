@@ -11,7 +11,7 @@ can't go), map link for the address, host can edit details, "Your events" list o
 home page (stored in the browser), theme / dress code, Spotify playlist link with an
 embedded player and a message for guests, comment wall (refreshes every 8 seconds),
 guests add songs to the host's Spotify playlist from the app (no Spotify account needed),
-app in French, host-chosen background picture (resized in the browser, stored in D1).
+app in French, host-chosen background picture via a floating organizer-only button (resized in the browser, stored in D1).
 
 **Next:** shared checklist/notes, link previews and polish,
 photos later.
