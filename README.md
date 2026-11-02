@@ -11,7 +11,7 @@ can't go), map link for the address, host can edit details, "Your events" list o
 home page (stored in the browser), theme / dress code, Spotify playlist link with an
 embedded player and a message for guests, comment wall (refreshes every 8 seconds),
 guests add songs to the host's Spotify playlist from the app (no Spotify account needed),
-app in French.
+app in French, host-chosen background picture (resized in the browser, stored in D1).
 
 **Next:** shared checklist/notes, link previews and polish,
 photos later.
@@ -86,6 +86,9 @@ migrations and then deploys.
 | GET | `/api/parties/:id/comments` | guest | `{comments}` (latest 200, oldest first) |
 | POST | `/api/parties/:id/comments` | guest | `{body}` → `{comments}` |
 | DELETE | `/api/parties/:id/comments/:commentId` | author or host | → `{comments}` |
+| GET | `/api/parties/:id/background?v=` | none | The event's background picture |
+| PUT | `/api/parties/:id/background` | host | Raw JPEG/PNG/WebP body (≤ 1 MB) → full event |
+| DELETE | `/api/parties/:id/background` | host | Remove the picture |
 | POST | `/api/parties/:id/spotify/connect` | host | → `{url}` Spotify consent page |
 | GET | `/api/spotify/callback` | (Spotify) | OAuth return, redirects to `/e/:id?spotify=…` |
 | DELETE | `/api/parties/:id/spotify` | host | Disconnect Spotify |
