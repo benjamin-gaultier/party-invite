@@ -8,7 +8,9 @@
     "db:migrate:remote": "wrangler d1 migrations apply party-invite --remote",
     "deploy": "wrangler d1 migrations apply party-invite --remote && wrangler deploy",
     "typecheck": "tsc",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "smoke:spotify": "node scripts/smoke-spotify.mjs",
+    "fake-spotify": "node scripts/fake-spotify.mjs"
   },
   "dependencies": {
     "hono": "^4.13.12"

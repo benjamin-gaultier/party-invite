@@ -196,3 +196,17 @@ iframe.spotify { width: 100%; border: 0; border-radius: 12px; display: block; ba
 .comment-meta .delete { margin-left: auto; color: var(--muted); }
 .comment-form { display: flex; gap: 8px; align-items: flex-end; }
 .comment-form textarea { flex: 1; min-width: 0; resize: vertical; }
+
+.music h3 { margin-top: 16px; }
+.song-search input { font-size: 1rem; }
+.tracks { list-style: none; padding: 0; margin: 8px 0 0; display: flex; flex-direction: column; gap: 6px; }
+.tracks:empty { display: none; }
+.tracks li { display: flex; align-items: center; gap: 10px; padding: 6px; border-radius: 10px; background: var(--bg); }
+.tracks li.empty { background: none; }
+.tracks img, .tracks .cover { width: 40px; height: 40px; border-radius: 6px; flex: none; object-fit: cover; display: grid; place-items: center; background: var(--accent-soft); }
+.track-text { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.3; }
+.track-text > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track-side { flex: none; font-size: 0.85rem; color: var(--muted); max-width: 35%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.add-song { padding: 6px 12px; font-size: 0.85rem; background: #1db954; border-color: #1db954; color: #fff; }
+.connect-box { border: 1px dashed var(--border); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.connect-box p { margin: 0; }

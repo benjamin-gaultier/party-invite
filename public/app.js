@@ -67,12 +67,12 @@ async function api(path, { method = "GET", body, token } = {}) {
 const esc = (s) =>
   String(s ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
 
-function toast(message) {
+function toast(message, ms = 2500) {
   const el = document.getElementById("toast");
   el.textContent = message;
   el.hidden = false;
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => (el.hidden = true), 2500);
+  toast.timer = setTimeout(() => (el.hidden = true), ms);
 }
 
 function formatWhen(date, time) {
@@ -358,7 +358,7 @@ function renderSpace(eventId, data) {
       ${guestList("none", "Pas encore répondu")}
     </section>
 
-    ${musicSection(event, me)}
+    ${musicSection(event, me, data.spotify)}
 
     <section class="card">
       <h2>💬 Commentaires</h2>
@@ -373,7 +373,7 @@ function renderSpace(eventId, data) {
   `;
 
   setupComments(eventId, me, data.comments || [], identity.token);
-  document.getElementById("add-playlist")?.addEventListener("click", () => renderEdit(eventId, data));
+  setupMusic(eventId, data, identity.token);
 
   for (const btn of app.querySelectorAll("[data-rsvp]")) {
     btn.addEventListener("click", () =>
@@ -415,25 +415,156 @@ function renderSpace(eventId, data) {
   }
 }
 
-function musicSection(event, me) {
-  if (!event.playlist_url) {
-    return me.isHost
-      ? `<section class="card"><h2>🎵 Playlist</h2>
-           <p class="muted small">Ajoutez une playlist Spotify pour que les invités puissent l'écouter et y ajouter leurs chansons.</p>
-           <button id="add-playlist">Ajouter une playlist</button></section>`
-      : "";
+function musicSection(event, me, spotify = {}) {
+  const host = me.isHost;
+  const hostControls = !host
+    ? ""
+    : spotify.connected
+      ? `<p class="muted small">Connecté à Spotify (${esc(spotify.accountName)}) · <button class="link small" id="spotify-disconnect">Déconnecter</button></p>`
+      : spotify.enabled
+        ? `<div class="connect-box"><p class="small">Connectez votre compte Spotify pour que les invités ajoutent des chansons directement ici, même sans Spotify.</p>
+             <button class="spotify-btn" id="spotify-connect">Connecter Spotify</button></div>`
+        : "";
+
+  if (!event.playlist_url && !spotify.connected) {
+    if (!host) return "";
+    return `<section class="card stack"><h2>🎵 Playlist</h2>
+        ${
+          spotify.enabled
+            ? hostControls + `<p class="muted small center">ou <button class="link small" id="add-playlist">collez le lien d'une playlist</button></p>`
+            : `<p class="muted small">Ajoutez une playlist Spotify pour que les invités puissent l'écouter et y ajouter leurs chansons.</p>
+               <button id="add-playlist">Ajouter une playlist</button>`
+        }</section>`;
   }
+
   const embed = spotifyEmbed(event.playlist_url);
+  const songs = spotify.songs || [];
   return `<section class="card music">
       <h2>🎵 Playlist</h2>
       ${event.playlist_note ? `<p class="playlist-note">${esc(event.playlist_note)}</p>` : ""}
       ${
-        embed
-          ? `<iframe class="spotify" src="${esc(embed)}" height="352" loading="lazy" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" title="Spotify playlist"></iframe>`
+        spotify.connected
+          ? `<form id="song-search" class="song-search" role="search" autocomplete="off">
+               <input name="q" type="search" maxlength="100" placeholder="🔎 Ajouter une chanson : titre ou artiste" enterkeyhint="search">
+             </form>
+             <ul class="tracks" id="song-results"></ul>`
           : ""
       }
-      <a class="btn spotify-btn" href="${esc(event.playlist_url)}" target="_blank" rel="noopener">${musicLabel(event.playlist_url)}</a>
+      ${
+        embed
+          ? `<iframe class="spotify" id="spotify-embed" src="${esc(embed)}" height="352" loading="lazy" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" title="Playlist Spotify"></iframe>`
+          : ""
+      }
+      ${event.playlist_url ? `<a class="btn spotify-btn" href="${esc(event.playlist_url)}" target="_blank" rel="noopener">${musicLabel(event.playlist_url)}</a>` : ""}
+      ${
+        songs.length
+          ? `<h3>Ajoutées par les invités <span class="count">${songs.length}</span></h3>
+             <ul class="tracks">${songs.map((t) => trackItem(t, `par ${esc(t.addedBy)}`)).join("")}</ul>`
+          : ""
+      }
+      ${hostControls}
     </section>`;
+}
+
+function trackItem(t, right) {
+  return `<li>
+      ${t.image ? `<img src="${esc(t.image)}" alt="" width="40" height="40" loading="lazy">` : `<span class="cover">🎵</span>`}
+      <span class="track-text"><strong>${esc(t.title)}</strong><span class="muted small">${esc(t.artists)}</span></span>
+      <span class="track-side">${right}</span>
+    </li>`;
+}
+
+const SPOTIFY_RESULTS = {
+  connected: "Spotify est connecté 🎉 Les invités peuvent ajouter des chansons.",
+  cancelled: "Connexion Spotify annulée.",
+  not_owner: "Ce compte Spotify ne peut pas modifier la playlist de l'événement. Connectez le compte propriétaire, ou retirez le lien pour en créer une nouvelle.",
+  not_allowed: "Ce compte Spotify n'est pas autorisé par l'appli Spotify (User Management).",
+  error: "La connexion à Spotify a échoué, réessayez.",
+  expired: "La connexion à Spotify a expiré, réessayez.",
+};
+
+// Shows the outcome of the Spotify OAuth redirect (?spotify=…) once, then cleans the URL.
+function spotifyRedirectNotice() {
+  const params = new URLSearchParams(location.search);
+  const result = params.get("spotify");
+  if (!result) return;
+  history.replaceState(null, "", location.pathname);
+  setTimeout(() => toast(SPOTIFY_RESULTS[result] || SPOTIFY_RESULTS.error, 6000), 300);
+}
+
+function setupMusic(eventId, data, token) {
+  const { spotify = {} } = data;
+  document.getElementById("add-playlist")?.addEventListener("click", () => renderEdit(eventId, data));
+
+  document.getElementById("spotify-connect")?.addEventListener("click", (ev) =>
+    withBusy(ev.currentTarget, async () => {
+      const { url } = await api(`/parties/${eventId}/spotify/connect`, { method: "POST", token });
+      location.href = url;
+    }),
+  );
+  document.getElementById("spotify-disconnect")?.addEventListener("click", async () => {
+    if (!confirm("Déconnecter Spotify ? Les invités ne pourront plus ajouter de chansons depuis l'appli.")) return;
+    try {
+      renderSpace(eventId, await api(`/parties/${eventId}/spotify`, { method: "DELETE", token }));
+    } catch (err) {
+      toast(err.message);
+    }
+  });
+
+  const form = document.getElementById("song-search");
+  if (!form) return;
+  const input = form.querySelector("input");
+  const results = document.getElementById("song-results");
+  const added = new Set((spotify.songs || []).map((t) => t.trackId));
+  let timer;
+  let seq = 0;
+
+  const search = async () => {
+    const q = input.value.trim();
+    const mine = ++seq;
+    if (q.length < 2) {
+      results.innerHTML = "";
+      return;
+    }
+    try {
+      const { tracks } = await api(`/parties/${eventId}/spotify/search?q=${encodeURIComponent(q)}`, { token });
+      if (mine !== seq) return; // a newer search is on its way
+      results.innerHTML = tracks.length
+        ? tracks
+            .map((t) =>
+              trackItem(
+                t,
+                added.has(t.trackId)
+                  ? `<span class="muted small">Déjà ajoutée</span>`
+                  : `<button class="add-song" data-track="${esc(t.trackId)}">Ajouter</button>`,
+              ),
+            )
+            .join("")
+        : `<li class="empty muted small">Aucun résultat</li>`;
+    } catch (err) {
+      if (mine === seq) toast(err.message);
+    }
+  };
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(search, 350);
+  });
+  form.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    clearTimeout(timer);
+    search();
+  });
+
+  results.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-track]");
+    if (!btn) return;
+    withBusy(btn, async () => {
+      await api(`/parties/${eventId}/spotify/songs`, { method: "POST", body: { trackId: btn.dataset.track }, token });
+      toast("Ajoutée à la playlist 🎶");
+      // Re-fetch so the song list (and the embedded player) show the new song.
+      renderSpace(eventId, await api(`/parties/${eventId}`, { token }));
+    });
+  });
 }
 
 // ---------- comment wall ----------
@@ -560,7 +691,10 @@ function route() {
   stopCommentsPolling();
   const match = location.pathname.match(/^\/e\/([A-Za-z0-9_-]+)\/?$/);
   window.scrollTo(0, 0);
-  if (match) renderEvent(match[1]);
+  if (match) {
+    spotifyRedirectNotice();
+    renderEvent(match[1]);
+  }
   else renderHome();
 }
 
