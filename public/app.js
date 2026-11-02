@@ -90,6 +90,74 @@ function formatWhen(date, time) {
   return `${day} · ${t}`;
 }
 
+// "J-12", "Demain !", "C'est aujourd'hui 🎉", or how long ago.
+function countdown(date) {
+  if (!date) return "";
+  const [y, m, d] = date.split("-").map(Number);
+  const today = new Date();
+  const days = Math.round((new Date(y, m - 1, d) - new Date(today.getFullYear(), today.getMonth(), today.getDate())) / 86400000);
+  if (days === 0) return "C'est aujourd'hui 🎉";
+  if (days === 1) return "Demain !";
+  if (days > 1) return `J-${days}`;
+  if (days === -1) return "C'était hier";
+  return `C'était il y a ${-days} jours`;
+}
+
+// Colored initials bubble, same color for the same name everywhere.
+function avatar(name, size = "") {
+  const clean = String(name || "?").trim();
+  const initials = clean
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase();
+  let hash = 0;
+  for (const ch of clean) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
+  return `<span class="avatar ${size}" style="--hue:${hash % 360}" aria-hidden="true">${esc(initials || "?")}</span>`;
+}
+
+// Overlapping faces of the people coming, "+N" when there are many.
+function faces(people, max = 5) {
+  if (!people.length) return "";
+  const shown = people.slice(0, max).map((g) => avatar(g.name, "sm")).join("");
+  const more = people.length > max ? `<span class="avatar sm more">+${people.length - max}</span>` : "";
+  return `<span class="faces">${shown}${more}</span>`;
+}
+
+// A little burst of confetti from an element (used when someone says "Je viens").
+function confetti(from) {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const rect = from.getBoundingClientRect();
+  const colors = ["#ffcd00", "#ff4d8d", "#3fcf8e", "#5b9dff", "#ff9f43", "#a78bfa"];
+  for (let i = 0; i < 36; i++) {
+    const bit = document.createElement("span");
+    bit.className = "confetti";
+    bit.style.left = `${rect.left + rect.width / 2}px`;
+    bit.style.top = `${rect.top + rect.height / 2}px`;
+    bit.style.background = colors[i % colors.length];
+    bit.style.setProperty("--dx", `${(Math.random() - 0.5) * 320}px`);
+    bit.style.setProperty("--dy", `${-120 - Math.random() * 220}px`);
+    bit.style.setProperty("--rot", `${Math.random() * 720 - 360}deg`);
+    document.body.appendChild(bit);
+    setTimeout(() => bit.remove(), 1400);
+  }
+}
+
+// Big header for an event: photo (or color gradient), countdown, title, date, theme.
+function eventHero(eventId, ev, extra = "") {
+  const photo = ev.background_version ? backgroundUrl(eventId, ev.background_version) : "";
+  return `<header class="event-hero ${photo ? "has-photo" : ""}" ${photo ? `style="--hero-image:url('${esc(photo)}')"` : ""}>
+      <div class="hero-inner">
+        ${ev.date ? `<span class="chip">${esc(countdown(ev.date))}</span>` : ""}
+        ${extra}
+        <h1>${esc(ev.title)}</h1>
+        <p class="hero-when">📅 ${esc(formatWhen(ev.date, ev.time))}</p>
+        ${ev.theme ? `<p class="hero-theme">🎭 ${esc(ev.theme)}</p>` : ""}
+      </div>
+    </header>`;
+}
+
 function mapsUrl(address) {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
 }
@@ -379,14 +447,12 @@ function renderJoin(eventId, preview) {
   document.title = `${preview.title} · Party Invite`;
   const store = loadStore();
   app.innerHTML = `
-    <header class="hero">
-      <div class="emoji">💌</div>
-      <p class="muted">${preview.hostName ? `${esc(preview.hostName)} vous invite à` : "Vous êtes invité·e à"}</p>
-      <h1>${esc(preview.title)}</h1>
-      <p class="when">${esc(formatWhen(preview.date, preview.time))}</p>
-      ${preview.theme ? `<p class="theme-pill">🎭 ${esc(preview.theme)}</p>` : ""}
-      ${preview.going ? `<p class="muted">${preview.going} ${preview.going > 1 ? "participants" : "participant"} pour l'instant</p>` : ""}
-    </header>
+    ${eventHero(
+      eventId,
+      preview,
+      `<p class="hero-invite">💌 ${preview.hostName ? `${esc(preview.hostName)} vous invite à` : "Vous êtes invité·e à"}</p>`,
+    )}
+    ${preview.going ? `<p class="center muted small going-line">🥳 ${preview.going} ${preview.going > 1 ? "personnes viennent" : "personne vient"} déjà</p>` : ""}
     <form id="join" class="card stack" autocomplete="off">
       <label>Comment vous appelez-vous ?
         <input name="name" required maxlength="40" placeholder="Votre prénom" value="${esc(store.lastName)}" autofocus>
@@ -426,13 +492,21 @@ function renderSpace(eventId, data) {
       ? `<div class="guest-group"><h3>${label} <span class="count">${groups[key].length}</span></h3>
          <ul class="guests">${groups[key]
            .map(
-             (g) => `<li>${esc(g.name)}${g.isHost ? ' <span class="badge">hôte</span>' : ""}${g.id === me.id ? ' <span class="badge you">vous</span>' : ""}</li>`,
+             (g) => `<li>${avatar(g.name, "sm")}${esc(g.name)}${g.isHost ? ' <span class="badge">hôte</span>' : ""}${g.id === me.id ? ' <span class="badge you">vous</span>' : ""}</li>`,
            )
            .join("")}</ul></div>`
       : "";
 
   app.innerHTML = `
-    <nav class="topbar"><a href="/">← Vos événements</a><span class="muted">Salut ${esc(me.name)} 👋</span></nav>
+    <nav class="topbar"><a href="/">← Vos événements</a><span class="hello">${avatar(me.name, "sm")} Salut ${esc(me.name)} 👋</span></nav>
+
+    ${eventHero(
+      eventId,
+      event,
+      groups.going.length
+        ? `<p class="hero-going">${faces(groups.going)} <span>${groups.going.length} ${groups.going.length > 1 ? "viennent" : "vient"}</span></p>`
+        : "",
+    )}
 
     ${
       me.isHost
@@ -451,14 +525,15 @@ function renderSpace(eventId, data) {
         : ""
     }
 
-    <section class="card event-info">
-      <h1>${esc(event.title)}</h1>
-      <p class="when">📅 ${esc(formatWhen(event.date, event.time))}</p>
-      ${event.theme ? `<p class="theme"><span class="muted small">Thème</span><br>🎭 <strong>${esc(event.theme)}</strong></p>` : ""}
-      ${event.address ? `<p>📍 <a href="${mapsUrl(event.address)}" target="_blank" rel="noopener">${esc(event.address)}</a></p>` : ""}
-      ${event.description ? `<p class="description">${esc(event.description)}</p>` : ""}
-      ${me.isHost ? `<button class="link" id="edit">Modifier les détails</button>` : ""}
-    </section>
+    ${
+      event.address || event.description || me.isHost
+        ? `<section class="card event-info">
+            ${event.address ? `<p class="address">📍 <a href="${mapsUrl(event.address)}" target="_blank" rel="noopener">${esc(event.address)}</a></p>` : ""}
+            ${event.description ? `<p class="description">${esc(event.description)}</p>` : ""}
+            ${me.isHost ? `<button class="link" id="edit">✏️ Modifier les détails</button>` : ""}
+          </section>`
+        : ""
+    }
 
     <section class="card">
       <h2>Vous venez ?</h2>
@@ -524,6 +599,7 @@ function renderSpace(eventId, data) {
     btn.addEventListener("click", () =>
       withBusy(btn, async () => {
         const next = await api(`/parties/${eventId}/rsvp`, { method: "PUT", body: { status: btn.dataset.rsvp }, token: identity.token });
+        if (btn.dataset.rsvp === "going" && me.rsvp !== "going") confetti(btn);
         renderSpace(eventId, next);
       }),
     );
@@ -741,11 +817,14 @@ function setupComments(eventId, me, initial, token) {
       ? comments
           .map(
             (c) => `<li class="${c.guestId === me.id ? "mine" : ""}">
-              <div class="comment-meta"><strong>${esc(c.name)}</strong>
-                <span class="muted small" data-at="${esc(c.createdAt)}">${esc(formatAgo(c.createdAt))}</span>
-                ${c.guestId === me.id || me.isHost ? `<button class="link small delete" data-delete="${esc(c.id)}" aria-label="Supprimer le commentaire">Supprimer</button>` : ""}
-              </div>
-              <p>${esc(c.body)}</p></li>`,
+              ${avatar(c.name)}
+              <div class="comment-body">
+                <div class="comment-meta"><strong>${esc(c.name)}</strong>
+                  <span class="muted small" data-at="${esc(c.createdAt)}">${esc(formatAgo(c.createdAt))}</span>
+                  ${c.guestId === me.id || me.isHost ? `<button class="link small delete" data-delete="${esc(c.id)}" aria-label="Supprimer le commentaire">Supprimer</button>` : ""}
+                </div>
+                <p>${esc(c.body)}</p>
+              </div></li>`,
           )
           .join("")
       : `<li class="empty muted small">Pas encore de commentaires. Lancez-vous !</li>`;
