@@ -50,22 +50,38 @@ class HttpError extends Error {
   }
 }
 
+// Field names as guests see them, for error messages (the UI is in French).
+const LABELS: Record<string, string> = {
+  title: "Titre",
+  description: "Détails",
+  date: "Date",
+  time: "Heure",
+  address: "Adresse",
+  name: "Prénom",
+  hostName: "Votre prénom",
+  theme: "Thème",
+  playlist_url: "Lien de la playlist",
+  playlist_note: "Message de la playlist",
+  body: "Commentaire",
+};
+const label = (field: string) => `Le champ « ${LABELS[field] ?? field} »`;
+
 function str(value: unknown, field: string, max: number, required = false): string {
   const s = typeof value === "string" ? value.trim() : "";
-  if (required && !s) throw new HttpError(400, `${field} is required`);
-  if (s.length > max) throw new HttpError(400, `${field} is too long (max ${max})`);
+  if (required && !s) throw new HttpError(400, `${label(field)} est obligatoire`);
+  if (s.length > max) throw new HttpError(400, `${label(field)} est trop long (max ${max} caractères)`);
   return s;
 }
 
 function dateStr(value: unknown): string {
   const s = str(value, "date", 10, true);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new HttpError(400, "date must be YYYY-MM-DD");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new HttpError(400, "La date doit être au format AAAA-MM-JJ");
   return s;
 }
 
 function timeStr(value: unknown): string {
   const s = str(value, "time", 5);
-  if (s && !/^\d{2}:\d{2}$/.test(s)) throw new HttpError(400, "time must be HH:MM");
+  if (s && !/^\d{2}:\d{2}$/.test(s)) throw new HttpError(400, "L'heure doit être au format HH:MM");
   return s;
 }
 
@@ -77,9 +93,9 @@ function urlStr(value: unknown, field: string): string {
   try {
     url = new URL(s);
   } catch {
-    throw new HttpError(400, `${field} must be a link starting with https://`);
+    throw new HttpError(400, `${label(field)} doit être un lien commençant par https://`);
   }
-  if (url.protocol !== "https:" && url.protocol !== "http:") throw new HttpError(400, `${field} must be a link starting with https://`);
+  if (url.protocol !== "https:" && url.protocol !== "http:") throw new HttpError(400, `${label(field)} doit être un lien commençant par https://`);
   return url.toString();
 }
 
@@ -88,7 +104,7 @@ async function body(c: Context<App>): Promise<Record<string, unknown>> {
     const json = await c.req.json();
     return json && typeof json === "object" ? json : {};
   } catch {
-    throw new HttpError(400, "Invalid JSON body");
+    throw new HttpError(400, "Requête invalide");
   }
 }
 
@@ -97,7 +113,7 @@ async function getEvent(db: D1Database, id: string): Promise<EventRow> {
     .prepare(`SELECT ${EVENT_COLS} FROM events WHERE id = ?`)
     .bind(id)
     .first<EventRow>();
-  if (!row) throw new HttpError(404, "Event not found");
+  if (!row) throw new HttpError(404, "Événement introuvable");
   return row;
 }
 
@@ -116,7 +132,7 @@ async function currentGuest(c: Context<App>, eventId: string): Promise<GuestRow 
 
 async function requireGuest(c: Context<App>, eventId: string): Promise<GuestRow> {
   const guest = await currentGuest(c, eventId);
-  if (!guest) throw new HttpError(401, "Join the event first");
+  if (!guest) throw new HttpError(401, "Rejoignez d'abord l'événement");
   return guest;
 }
 
@@ -232,7 +248,7 @@ app.put("/parties/:id/rsvp", async (c) => {
   const event = await getEvent(c.env.DB, c.req.param("id"));
   const me = await requireGuest(c, event.id);
   const status = (await body(c)).status;
-  if (!RSVPS.includes(status as Rsvp)) throw new HttpError(400, "status must be going, maybe or not_going");
+  if (!RSVPS.includes(status as Rsvp)) throw new HttpError(400, "Réponse invalide (going, maybe ou not_going)");
   await c.env.DB.prepare("UPDATE guests SET rsvp = ?, updated_at = datetime('now') WHERE id = ?")
     .bind(status, me.id)
     .run();
@@ -254,7 +270,7 @@ app.patch("/parties/:id/me", async (c) => {
 app.patch("/parties/:id", async (c) => {
   const event = await getEvent(c.env.DB, c.req.param("id"));
   const me = await requireGuest(c, event.id);
-  if (me.is_host !== 1) throw new HttpError(403, "Only the host can edit the event");
+  if (me.is_host !== 1) throw new HttpError(403, "Seul l'hôte peut modifier l'événement");
   const b = await body(c);
   const next: EventRow = {
     ...event,
@@ -303,7 +319,7 @@ app.post("/parties/:id/comments", async (c) => {
   )
     .bind(me.id)
     .first<{ n: number }>();
-  if ((recent?.n ?? 0) >= 20) throw new HttpError(429, "Slow down a little, try again in a minute");
+  if ((recent?.n ?? 0) >= 20) throw new HttpError(429, "Doucement ! Réessayez dans une minute");
   await c.env.DB.prepare("INSERT INTO comments (id, event_id, guest_id, body) VALUES (?, ?, ?, ?)")
     .bind(randomId(9), event.id, me.id, text)
     .run();
@@ -317,18 +333,18 @@ app.delete("/parties/:id/comments/:commentId", async (c) => {
   const row = await c.env.DB.prepare("SELECT guest_id FROM comments WHERE id = ? AND event_id = ?")
     .bind(c.req.param("commentId"), event.id)
     .first<{ guest_id: string }>();
-  if (!row) throw new HttpError(404, "Comment not found");
-  if (row.guest_id !== me.id && me.is_host !== 1) throw new HttpError(403, "You can only delete your own comments");
+  if (!row) throw new HttpError(404, "Commentaire introuvable");
+  if (row.guest_id !== me.id && me.is_host !== 1) throw new HttpError(403, "Vous ne pouvez supprimer que vos propres commentaires");
   await c.env.DB.prepare("DELETE FROM comments WHERE id = ?").bind(c.req.param("commentId")).run();
   return c.json({ comments: await listComments(c.env.DB, event.id) });
 });
 
-app.notFound((c) => c.json({ error: "Not found" }, 404));
+app.notFound((c) => c.json({ error: "Introuvable" }, 404));
 
 app.onError((err, c) => {
   if (err instanceof HttpError) return c.json({ error: err.message }, err.status);
   console.error(err);
-  return c.json({ error: "Something went wrong" }, 500);
+  return c.json({ error: "Une erreur est survenue" }, 500);
 });
 
 export default app;
