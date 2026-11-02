@@ -9,9 +9,11 @@ link again goes straight into the event.
 link, join with a name, remembered return visits, guest list, RSVP (going / maybe /
 can't go), map link for the address, host can edit details, "Your events" list on the
 home page (stored in the browser), theme / dress code, Spotify playlist link with an
-embedded player and a message for guests, comment wall (refreshes every 8 seconds).
+embedded player and a message for guests, comment wall (refreshes every 8 seconds),
+guests add songs to the host's Spotify playlist from the app (no Spotify account needed),
+app in French.
 
-**Next:** shared checklist/notes, in-app song suggestions, link previews and polish,
+**Next:** shared checklist/notes, link previews and polish,
 photos later.
 
 ## Stack
@@ -32,6 +34,28 @@ npm run dev            # http://localhost:8787
 npm run smoke          # in a second terminal: end-to-end API checks
 npm run typecheck
 ```
+
+## Spotify (guests add songs from the app)
+
+The host connects their Spotify account once from the event page. Guests then search
+and add tracks through `/api/parties/:id/spotify/*`; the Worker calls Spotify with the
+host's token, so guests need no Spotify account. If the event has no playlist link,
+connecting creates a public playlist named after the event.
+
+Setup (once):
+
+1. Create an app at <https://developer.spotify.com/dashboard> (the owner needs Spotify
+   Premium for development-mode apps). Tick **Web API**, add the redirect URI
+   `https://<your-worker-host>/api/spotify/callback` (add preview hosts too if you test there).
+2. Under **User Management**, add the Spotify account of every host who will connect
+   (max 5 in development mode). Guests don't need to be listed.
+3. Set Worker secrets `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` (dashboard →
+   Workers → party-invite → Settings → Variables and Secrets). Without them the
+   "Connecter Spotify" button is hidden and the playlist link/embed still works.
+
+Local test without Spotify: `npm run fake-spotify`, then
+`npx wrangler dev --var SPOTIFY_CLIENT_ID:test --var SPOTIFY_CLIENT_SECRET:test --var SPOTIFY_API_URL:http://localhost:8788/v1 --var SPOTIFY_ACCOUNTS_URL:http://localhost:8788`
+and `npm run smoke:spotify`.
 
 ## Deploy to Cloudflare
 
@@ -62,3 +86,8 @@ migrations and then deploys.
 | GET | `/api/parties/:id/comments` | guest | `{comments}` (latest 200, oldest first) |
 | POST | `/api/parties/:id/comments` | guest | `{body}` → `{comments}` |
 | DELETE | `/api/parties/:id/comments/:commentId` | author or host | → `{comments}` |
+| POST | `/api/parties/:id/spotify/connect` | host | → `{url}` Spotify consent page |
+| GET | `/api/spotify/callback` | (Spotify) | OAuth return, redirects to `/e/:id?spotify=…` |
+| DELETE | `/api/parties/:id/spotify` | host | Disconnect Spotify |
+| GET | `/api/parties/:id/spotify/search?q=` | guest | `{tracks}` (10 max) |
+| POST | `/api/parties/:id/spotify/songs` | guest | `{trackId}` → adds to the playlist, `{songs}` |
