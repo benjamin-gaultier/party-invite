@@ -44,6 +44,28 @@ check("guest cannot edit event", (await call(`/parties/${eventId}`, { method: "P
 const edited = await call(`/parties/${eventId}`, { method: "PATCH", body: { title: "Renamed" }, token: host.token });
 check("host can edit event", edited.data.event?.title === "Renamed");
 
+const themed = await call(`/parties/${eventId}`, {
+  method: "PATCH",
+  body: { theme: "Paris metro stops", playlist_url: "https://open.spotify.com/playlist/abc123", playlist_note: "Add French songs" },
+  token: host.token,
+});
+check("host sets theme and playlist", themed.data.event?.theme === "Paris metro stops" && themed.data.event?.playlist_url.includes("spotify"));
+check("bad playlist link rejected", (await call(`/parties/${eventId}`, { method: "PATCH", body: { playlist_url: "javascript:alert(1)" }, token: host.token })).status === 400);
+check("preview shows theme", (await call(`/parties/${eventId}`)).data.preview?.theme === "Paris metro stops");
+
+const posted = await call(`/parties/${eventId}/comments`, { method: "POST", body: { body: "Bonjour !" }, token: guest.token });
+check("guest posts a comment", posted.status === 201 && posted.data.comments.at(-1)?.name === "Guest");
+await call(`/parties/${eventId}/comments`, { method: "POST", body: { body: "Salut" }, token: host.token });
+const listed = await call(`/parties/${eventId}/comments`, { token: guest.token });
+check("comments listed oldest first", listed.data.comments.map((c) => c.body).join() === "Bonjour !,Salut");
+check("full event includes comments", (await call(`/parties/${eventId}`, { token: guest.token })).data.comments?.length === 2);
+check("comments need a token", (await call(`/parties/${eventId}/comments`)).status === 401);
+check("empty comment rejected", (await call(`/parties/${eventId}/comments`, { method: "POST", body: { body: " " }, token: guest.token })).status === 400);
+const hostComment = listed.data.comments[1];
+check("guest cannot delete host's comment", (await call(`/parties/${eventId}/comments/${hostComment.id}`, { method: "DELETE", token: guest.token })).status === 403);
+const del = await call(`/parties/${eventId}/comments/${listed.data.comments[0].id}`, { method: "DELETE", token: host.token });
+check("host can delete any comment", del.status === 200 && del.data.comments.length === 1);
+
 const otherEvent = await call("/parties", { method: "POST", body: { title: "Other", date: "2030-01-01", hostName: "X" } });
 const cross = await call(`/parties/${otherEvent.data.eventId}`, { token: guest.token });
 check("token does not work on another event", !!cross.data.preview);

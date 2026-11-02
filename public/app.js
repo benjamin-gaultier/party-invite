@@ -94,6 +94,37 @@ function mapsUrl(address) {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
 }
 
+// Spotify links look like https://open.spotify.com/(intl-fr/)playlist/<id>?si=…
+// Returns the embeddable player URL, or null for other links (short links, other services).
+function spotifyEmbed(url) {
+  try {
+    const u = new URL(url);
+    if (u.hostname !== "open.spotify.com") return null;
+    const m = u.pathname.match(/^\/(?:intl-[a-z-]+\/)?(playlist|album|track|artist|show|episode)\/([A-Za-z0-9]+)/);
+    return m ? `https://open.spotify.com/embed/${m[1]}/${m[2]}` : null;
+  } catch {
+    return null;
+  }
+}
+
+function musicLabel(url) {
+  return /spotify\.(com|link)/.test(url) ? "Open in Spotify" : "Open playlist";
+}
+
+// D1 stores UTC as "YYYY-MM-DD HH:MM:SS".
+function formatAgo(sqlDate) {
+  const then = new Date(sqlDate.replace(" ", "T") + "Z");
+  const mins = Math.round((Date.now() - then) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const sameDay = then.toDateString() === new Date().toDateString();
+  return sameDay
+    ? then.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+    : then.toLocaleDateString(undefined, { day: "numeric", month: "short" }) +
+        " · " +
+        then.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
 function shareUrl(eventId) {
   return `${location.origin}/e/${eventId}`;
 }
@@ -112,6 +143,24 @@ async function withBusy(button, fn) {
   } finally {
     button.disabled = false;
   }
+}
+
+// Fields shared by the create and edit forms.
+function extraFields(event = {}) {
+  return `
+      <label>Theme / dress code <span class="muted">(optional)</span>
+        <input name="theme" maxlength="200" placeholder="Les arrêts de métro de Paris 🚇" value="${esc(event.theme)}">
+      </label>
+      <fieldset class="stack">
+        <legend>🎵 Playlist <span class="muted">(optional)</span></legend>
+        <label>Spotify playlist link
+          <input name="playlist_url" type="url" maxlength="500" inputmode="url" placeholder="https://open.spotify.com/playlist/…" value="${esc(event.playlist_url)}">
+        </label>
+        <p class="muted small hint">Tip: in Spotify, open the playlist → ⋯ → <em>Invite collaborators</em> and paste that link, so guests can add songs.</p>
+        <label>Message for guests
+          <input name="playlist_note" maxlength="300" placeholder="Ajoutez vos chansons françaises préférées 🇫🇷" value="${esc(event.playlist_note)}">
+        </label>
+      </fieldset>`;
 }
 
 // ---------- home: create event + your events ----------
@@ -156,6 +205,7 @@ function renderHome() {
       <label>Details <span class="muted">(optional)</span>
         <textarea name="description" rows="3" maxlength="2000" placeholder="Bring a bottle, costumes welcome…"></textarea>
       </label>
+      ${extraFields()}
       <label>Your name
         <input name="hostName" required maxlength="40" placeholder="So guests know who's hosting" value="${esc(store.lastName)}">
       </label>
@@ -214,6 +264,7 @@ function renderJoin(eventId, preview) {
       <p class="muted">${preview.hostName ? `${esc(preview.hostName)} invited you to` : "You're invited to"}</p>
       <h1>${esc(preview.title)}</h1>
       <p class="when">${esc(formatWhen(preview.date, preview.time))}</p>
+      ${preview.theme ? `<p class="theme-pill">🎭 ${esc(preview.theme)}</p>` : ""}
       ${preview.going ? `<p class="muted">${preview.going} going so far</p>` : ""}
     </header>
     <form id="join" class="card stack" autocomplete="off">
@@ -281,6 +332,7 @@ function renderSpace(eventId, data) {
     <section class="card event-info">
       <h1>${esc(event.title)}</h1>
       <p class="when">📅 ${esc(formatWhen(event.date, event.time))}</p>
+      ${event.theme ? `<p class="theme"><span class="muted small">Theme</span><br>🎭 <strong>${esc(event.theme)}</strong></p>` : ""}
       ${event.address ? `<p>📍 <a href="${mapsUrl(event.address)}" target="_blank" rel="noopener">${esc(event.address)}</a></p>` : ""}
       ${event.description ? `<p class="description">${esc(event.description)}</p>` : ""}
       ${me.isHost ? `<button class="link" id="edit">Edit details</button>` : ""}
@@ -306,8 +358,22 @@ function renderSpace(eventId, data) {
       ${guestList("none", "Haven't answered")}
     </section>
 
+    ${musicSection(event, me)}
+
+    <section class="card">
+      <h2>💬 Comments</h2>
+      <ul class="comments" id="comments"></ul>
+      <form id="comment-form" class="comment-form" autocomplete="off">
+        <textarea name="body" rows="2" maxlength="1000" required placeholder="Say something to everyone…"></textarea>
+        <button class="primary" type="submit">Post</button>
+      </form>
+    </section>
+
     <p class="center small"><button class="link" id="rename">Change my name</button></p>
   `;
+
+  setupComments(eventId, me, data.comments || [], identity.token);
+  document.getElementById("add-playlist")?.addEventListener("click", () => renderEdit(eventId, data));
 
   for (const btn of app.querySelectorAll("[data-rsvp]")) {
     btn.addEventListener("click", () =>
@@ -349,6 +415,108 @@ function renderSpace(eventId, data) {
   }
 }
 
+function musicSection(event, me) {
+  if (!event.playlist_url) {
+    return me.isHost
+      ? `<section class="card"><h2>🎵 Playlist</h2>
+           <p class="muted small">Add a Spotify playlist so guests can listen and add their songs.</p>
+           <button id="add-playlist">Add a playlist</button></section>`
+      : "";
+  }
+  const embed = spotifyEmbed(event.playlist_url);
+  return `<section class="card music">
+      <h2>🎵 Playlist</h2>
+      ${event.playlist_note ? `<p class="playlist-note">${esc(event.playlist_note)}</p>` : ""}
+      ${
+        embed
+          ? `<iframe class="spotify" src="${esc(embed)}" height="352" loading="lazy" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" title="Spotify playlist"></iframe>`
+          : ""
+      }
+      <a class="btn spotify-btn" href="${esc(event.playlist_url)}" target="_blank" rel="noopener">${musicLabel(event.playlist_url)}</a>
+    </section>`;
+}
+
+// ---------- comment wall ----------
+// Not realtime: we refresh every few seconds while the event page is open.
+
+let commentsTimer = null;
+
+function stopCommentsPolling() {
+  clearInterval(commentsTimer);
+  commentsTimer = null;
+}
+
+function setupComments(eventId, me, initial, token) {
+  stopCommentsPolling();
+  const list = document.getElementById("comments");
+  const form = document.getElementById("comment-form");
+  let lastKey = "";
+
+  const draw = (comments) => {
+    const key = comments.map((c) => c.id + c.name).join();
+    if (key === lastKey) {
+      // Same comments: just refresh the "x min ago" labels.
+      for (const el of list.querySelectorAll("[data-at]")) el.textContent = formatAgo(el.dataset.at);
+      return;
+    }
+    const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+    lastKey = key;
+    list.innerHTML = comments.length
+      ? comments
+          .map(
+            (c) => `<li class="${c.guestId === me.id ? "mine" : ""}">
+              <div class="comment-meta"><strong>${esc(c.name)}</strong>
+                <span class="muted small" data-at="${esc(c.createdAt)}">${esc(formatAgo(c.createdAt))}</span>
+                ${c.guestId === me.id || me.isHost ? `<button class="link small delete" data-delete="${esc(c.id)}" aria-label="Delete comment">Delete</button>` : ""}
+              </div>
+              <p>${esc(c.body)}</p></li>`,
+          )
+          .join("")
+      : `<li class="empty muted small">No comments yet. Be the first!</li>`;
+    if (nearBottom || !list.dataset.ready) list.scrollTop = list.scrollHeight;
+    list.dataset.ready = "1";
+  };
+  draw(initial);
+
+  const refresh = async () => {
+    if (document.hidden || !document.body.contains(list)) return;
+    try {
+      draw((await api(`/parties/${eventId}/comments`, { token })).comments);
+    } catch {
+      // Offline for a moment: try again on the next tick.
+    }
+  };
+  commentsTimer = setInterval(refresh, 8000);
+
+  list.addEventListener("click", async (ev) => {
+    const btn = ev.target.closest("[data-delete]");
+    if (!btn || !confirm("Delete this comment?")) return;
+    withBusy(btn, async () => {
+      draw((await api(`/parties/${eventId}/comments/${btn.dataset.delete}`, { method: "DELETE", token })).comments);
+    });
+  });
+
+  const textarea = form.querySelector("textarea");
+  textarea.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && matchMedia("(pointer: fine)").matches) {
+      ev.preventDefault();
+      form.requestSubmit();
+    }
+  });
+  form.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const body = textarea.value.trim();
+    if (!body) return;
+    withBusy(form.querySelector("button"), async () => {
+      const { comments } = await api(`/parties/${eventId}/comments`, { method: "POST", body: { body }, token });
+      textarea.value = "";
+      lastKey = "";
+      list.dataset.ready = "";
+      draw(comments);
+    });
+  });
+}
+
 function renderEdit(eventId, data) {
   const { event } = data;
   const identity = getIdentity(eventId);
@@ -363,6 +531,7 @@ function renderEdit(eventId, data) {
       </div>
       <label>Address <input name="address" maxlength="300" value="${esc(event.address)}"></label>
       <label>Details <textarea name="description" rows="4" maxlength="2000">${esc(event.description)}</textarea></label>
+      ${extraFields(event)}
       <button class="primary" type="submit">Save</button>
     </form>
   `;
@@ -388,6 +557,7 @@ function renderMessage(text) {
 // ---------- router ----------
 
 function route() {
+  stopCommentsPolling();
   const match = location.pathname.match(/^\/e\/([A-Za-z0-9_-]+)\/?$/);
   window.scrollTo(0, 0);
   if (match) renderEvent(match[1]);
