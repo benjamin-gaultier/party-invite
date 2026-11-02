@@ -8,10 +8,11 @@ link again goes straight into the event.
 **MVP so far:** create event (title, date, time, address, details), unguessable share
 link, join with a name, remembered return visits, guest list, RSVP (going / maybe /
 can't go), map link for the address, host can edit details, "Your events" list on the
-home page (stored in the browser).
+home page (stored in the browser), theme / dress code, Spotify playlist link with an
+embedded player and a message for guests, comment wall (refreshes every 8 seconds).
 
-**Next:** event chat, shared checklist/notes, song suggestions + Spotify link, link
-previews and polish, photos later.
+**Next:** shared checklist/notes, in-app song suggestions, link previews and polish,
+photos later.
 
 ## Stack
 
@@ -35,7 +36,8 @@ npm run typecheck
 ## Deploy to Cloudflare
 
 The production D1 database `party-invite` already exists (its id is in `wrangler.jsonc`)
-and has migration `0001_init.sql` applied.
+and has `0001_init.sql` applied. `0002_theme_playlist_comments.sql` must be applied
+before the deploy that adds theme, playlist and comments.
 
 Deploys run through **Cloudflare Workers Builds**: in the Cloudflare dashboard,
 Workers & Pages → Create → Import a repository → `party-invite`, keep the default
@@ -56,4 +58,7 @@ migrations and then deploys.
 | POST | `/api/parties/:id/join` | none | `{name}` → `{guest:{id, token}}` |
 | PUT | `/api/parties/:id/rsvp` | guest | `{status: going \| maybe \| not_going}` |
 | PATCH | `/api/parties/:id/me` | guest | Rename yourself `{name}` |
-| PATCH | `/api/parties/:id` | host | Edit event fields |
+| PATCH | `/api/parties/:id` | host | Edit event fields (incl. `theme`, `playlist_url`, `playlist_note`) |
+| GET | `/api/parties/:id/comments` | guest | `{comments}` (latest 200, oldest first) |
+| POST | `/api/parties/:id/comments` | guest | `{body}` → `{comments}` |
+| DELETE | `/api/parties/:id/comments/:commentId` | author or host | → `{comments}` |

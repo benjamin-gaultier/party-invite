@@ -51,11 +51,11 @@ async function api(path, { method = "GET", body, token } = {}) {
   try {
     res = await fetch(`/api${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
   } catch {
-    throw new Error("Couldn't reach the server. Check your connection, or pause your ad blocker for this site.");
+    throw new Error("Impossible de joindre le serveur. Vérifiez votre connexion, ou désactivez votre bloqueur de pubs pour ce site.");
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const err = new Error(data.error || `Request failed (${res.status})`);
+    const err = new Error(data.error || `Erreur (${res.status})`);
     err.status = res.status;
     throw err;
   }
@@ -78,7 +78,7 @@ function toast(message) {
 function formatWhen(date, time) {
   if (!date) return "";
   const [y, m, d] = date.split("-").map(Number);
-  const day = new Date(y, m - 1, d).toLocaleDateString(undefined, {
+  const day = new Date(y, m - 1, d).toLocaleDateString("fr-FR", {
     weekday: "long",
     day: "numeric",
     month: "long",
@@ -86,12 +86,43 @@ function formatWhen(date, time) {
   });
   if (!time) return day;
   const [hh, mm] = time.split(":").map(Number);
-  const t = new Date(2000, 0, 1, hh, mm).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const t = new Date(2000, 0, 1, hh, mm).toLocaleTimeString("fr-FR", { hour: "numeric", minute: "2-digit" });
   return `${day} · ${t}`;
 }
 
 function mapsUrl(address) {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+}
+
+// Spotify links look like https://open.spotify.com/(intl-fr/)playlist/<id>?si=…
+// Returns the embeddable player URL, or null for other links (short links, other services).
+function spotifyEmbed(url) {
+  try {
+    const u = new URL(url);
+    if (u.hostname !== "open.spotify.com") return null;
+    const m = u.pathname.match(/^\/(?:intl-[a-z-]+\/)?(playlist|album|track|artist|show|episode)\/([A-Za-z0-9]+)/);
+    return m ? `https://open.spotify.com/embed/${m[1]}/${m[2]}` : null;
+  } catch {
+    return null;
+  }
+}
+
+function musicLabel(url) {
+  return /spotify\.(com|link)/.test(url) ? "Ouvrir dans Spotify" : "Ouvrir la playlist";
+}
+
+// D1 stores UTC as "YYYY-MM-DD HH:MM:SS".
+function formatAgo(sqlDate) {
+  const then = new Date(sqlDate.replace(" ", "T") + "Z");
+  const mins = Math.round((Date.now() - then) / 60000);
+  if (mins < 1) return "à l'instant";
+  if (mins < 60) return `il y a ${mins} min`;
+  const sameDay = then.toDateString() === new Date().toDateString();
+  return sameDay
+    ? then.toLocaleTimeString("fr-FR", { hour: "numeric", minute: "2-digit" })
+    : then.toLocaleDateString("fr-FR", { day: "numeric", month: "short" }) +
+        " · " +
+        then.toLocaleTimeString("fr-FR", { hour: "numeric", minute: "2-digit" });
 }
 
 function shareUrl(eventId) {
@@ -114,6 +145,24 @@ async function withBusy(button, fn) {
   }
 }
 
+// Fields shared by the create and edit forms.
+function extraFields(event = {}) {
+  return `
+      <label>Thème / dress code <span class="muted">(facultatif)</span>
+        <input name="theme" maxlength="200" placeholder="Les arrêts de métro de Paris 🚇" value="${esc(event.theme)}">
+      </label>
+      <fieldset class="stack">
+        <legend>🎵 Playlist <span class="muted">(facultatif)</span></legend>
+        <label>Lien de la playlist Spotify
+          <input name="playlist_url" type="url" maxlength="500" inputmode="url" placeholder="https://open.spotify.com/playlist/…" value="${esc(event.playlist_url)}">
+        </label>
+        <p class="muted small hint">Astuce : dans Spotify, ouvrez la playlist → ⋯ → <em>Inviter des collaborateurs</em> et collez ce lien, pour que les invités puissent ajouter des chansons.</p>
+        <label>Message pour les invités
+          <input name="playlist_note" maxlength="300" placeholder="Ajoutez vos chansons françaises préférées 🇫🇷" value="${esc(event.playlist_note)}">
+        </label>
+      </fieldset>`;
+}
+
 // ---------- home: create event + your events ----------
 
 function renderHome() {
@@ -130,7 +179,7 @@ function renderHome() {
     items
       .map(
         (e) => `<li><a class="event-link" href="/e/${esc(e.id)}">
-          <strong>${esc(e.title || "Untitled event")}</strong>
+          <strong>${esc(e.title || "Événement sans titre")}</strong>
           <span class="muted">${esc(formatWhen(e.date, e.time))}</span></a></li>`,
       )
       .join("");
@@ -138,32 +187,33 @@ function renderHome() {
   app.innerHTML = `
     <header class="hero">
       <div class="emoji">🎉</div>
-      <h1>Throw a party</h1>
-      <p class="muted">Create an event, share one link. Guests join with just their name, no app or account.</p>
+      <h1>Organisez une soirée</h1>
+      <p class="muted">Créez un événement, partagez un lien. Les invités rejoignent avec leur prénom, sans appli ni compte.</p>
     </header>
 
     <form id="create" class="card stack" autocomplete="off">
-      <label>What's the occasion?
-        <input name="title" required maxlength="120" placeholder="Banu's birthday 🎂">
+      <label>C'est quoi l'occasion ?
+        <input name="title" required maxlength="120" placeholder="L'anniversaire de Banu 🎂">
       </label>
       <div class="row">
         <label>Date <input name="date" type="date" required min="${today}"></label>
-        <label>Time <input name="time" type="time"></label>
+        <label>Heure <input name="time" type="time"></label>
       </div>
-      <label>Address
-        <input name="address" maxlength="300" placeholder="Street, city">
+      <label>Adresse
+        <input name="address" maxlength="300" placeholder="Rue, ville">
       </label>
-      <label>Details <span class="muted">(optional)</span>
-        <textarea name="description" rows="3" maxlength="2000" placeholder="Bring a bottle, costumes welcome…"></textarea>
+      <label>Détails <span class="muted">(facultatif)</span>
+        <textarea name="description" rows="3" maxlength="2000" placeholder="Apportez une bouteille, déguisements bienvenus…"></textarea>
       </label>
-      <label>Your name
-        <input name="hostName" required maxlength="40" placeholder="So guests know who's hosting" value="${esc(store.lastName)}">
+      ${extraFields()}
+      <label>Votre prénom
+        <input name="hostName" required maxlength="40" placeholder="Pour que les invités sachent qui reçoit" value="${esc(store.lastName)}">
       </label>
-      <button class="primary" type="submit">Create event &amp; get link</button>
+      <button class="primary" type="submit">Créer l'événement et obtenir le lien</button>
     </form>
 
-    ${upcoming.length ? `<section class="stack"><h2>Your upcoming events</h2><ul class="events">${list(upcoming)}</ul></section>` : ""}
-    ${past.length ? `<section class="stack"><h2>Past events</h2><ul class="events">${list(past)}</ul></section>` : ""}
+    ${upcoming.length ? `<section class="stack"><h2>Vos prochains événements</h2><ul class="events">${list(upcoming)}</ul></section>` : ""}
+    ${past.length ? `<section class="stack"><h2>Événements passés</h2><ul class="events">${list(past)}</ul></section>` : ""}
   `;
 
   const form = document.getElementById("create");
@@ -194,7 +244,7 @@ async function renderEvent(eventId) {
   try {
     data = await api(`/parties/${eventId}`, { token: identity?.token });
   } catch (err) {
-    return renderMessage(err.status === 404 ? "This event doesn't exist (or the link is incomplete)." : err.message);
+    return renderMessage(err.status === 404 ? "Cet événement n'existe pas (ou le lien est incomplet)." : err.message);
   }
 
   if (data.preview) {
@@ -211,17 +261,18 @@ function renderJoin(eventId, preview) {
   app.innerHTML = `
     <header class="hero">
       <div class="emoji">💌</div>
-      <p class="muted">${preview.hostName ? `${esc(preview.hostName)} invited you to` : "You're invited to"}</p>
+      <p class="muted">${preview.hostName ? `${esc(preview.hostName)} vous invite à` : "Vous êtes invité·e à"}</p>
       <h1>${esc(preview.title)}</h1>
       <p class="when">${esc(formatWhen(preview.date, preview.time))}</p>
-      ${preview.going ? `<p class="muted">${preview.going} going so far</p>` : ""}
+      ${preview.theme ? `<p class="theme-pill">🎭 ${esc(preview.theme)}</p>` : ""}
+      ${preview.going ? `<p class="muted">${preview.going} ${preview.going > 1 ? "participants" : "participant"} pour l'instant</p>` : ""}
     </header>
     <form id="join" class="card stack" autocomplete="off">
-      <label>What's your name?
-        <input name="name" required maxlength="40" placeholder="Your name" value="${esc(store.lastName)}" autofocus>
+      <label>Comment vous appelez-vous ?
+        <input name="name" required maxlength="40" placeholder="Votre prénom" value="${esc(store.lastName)}" autofocus>
       </label>
-      <button class="primary" type="submit">Join the party</button>
-      <p class="muted small center">No account needed. This browser will remember you.</p>
+      <button class="primary" type="submit">Rejoindre la soirée</button>
+      <p class="muted small center">Pas besoin de compte. Ce navigateur se souviendra de vous.</p>
     </form>
   `;
   const form = document.getElementById("join");
@@ -236,7 +287,7 @@ function renderJoin(eventId, preview) {
   });
 }
 
-const RSVP_LABELS = { going: "Going", maybe: "Maybe", not_going: "Can't go" };
+const RSVP_LABELS = { going: "Je viens", maybe: "Peut-être", not_going: "Je ne peux pas" };
 const RSVP_EMOJI = { going: "🥳", maybe: "🤔", not_going: "😢" };
 
 function renderSpace(eventId, data) {
@@ -253,26 +304,26 @@ function renderSpace(eventId, data) {
       ? `<div class="guest-group"><h3>${label} <span class="count">${groups[key].length}</span></h3>
          <ul class="guests">${groups[key]
            .map(
-             (g) => `<li>${esc(g.name)}${g.isHost ? ' <span class="badge">host</span>' : ""}${g.id === me.id ? ' <span class="badge you">you</span>' : ""}</li>`,
+             (g) => `<li>${esc(g.name)}${g.isHost ? ' <span class="badge">hôte</span>' : ""}${g.id === me.id ? ' <span class="badge you">vous</span>' : ""}</li>`,
            )
            .join("")}</ul></div>`
       : "";
 
   app.innerHTML = `
-    <nav class="topbar"><a href="/">← Your events</a><span class="muted">Hi ${esc(me.name)} 👋</span></nav>
+    <nav class="topbar"><a href="/">← Vos événements</a><span class="muted">Salut ${esc(me.name)} 👋</span></nav>
 
     ${
       me.isHost
         ? `<section class="card share ${identity?.justCreated ? "highlight" : ""}">
-            <h2>${identity?.justCreated ? "Your event is live! 🎉" : "Invite people"}</h2>
-            <p class="muted small">Anyone with this link can join.</p>
+            <h2>${identity?.justCreated ? "Votre événement est en ligne ! 🎉" : "Invitez du monde"}</h2>
+            <p class="muted small">Toute personne ayant ce lien peut rejoindre.</p>
             <div class="share-row">
               <input readonly value="${esc(shareUrl(eventId))}" id="share-url">
-              <button id="copy">Copy</button>
+              <button id="copy">Copier</button>
             </div>
             <div class="share-buttons">
               <a class="btn whatsapp" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(`${event.title} 🎉 ${shareUrl(eventId)}`)}">WhatsApp</a>
-              <button id="native-share" hidden>Share…</button>
+              <button id="native-share" hidden>Partager…</button>
             </div>
           </section>`
         : ""
@@ -281,13 +332,14 @@ function renderSpace(eventId, data) {
     <section class="card event-info">
       <h1>${esc(event.title)}</h1>
       <p class="when">📅 ${esc(formatWhen(event.date, event.time))}</p>
+      ${event.theme ? `<p class="theme"><span class="muted small">Thème</span><br>🎭 <strong>${esc(event.theme)}</strong></p>` : ""}
       ${event.address ? `<p>📍 <a href="${mapsUrl(event.address)}" target="_blank" rel="noopener">${esc(event.address)}</a></p>` : ""}
       ${event.description ? `<p class="description">${esc(event.description)}</p>` : ""}
-      ${me.isHost ? `<button class="link" id="edit">Edit details</button>` : ""}
+      ${me.isHost ? `<button class="link" id="edit">Modifier les détails</button>` : ""}
     </section>
 
     <section class="card">
-      <h2>Are you coming?</h2>
+      <h2>Vous venez ?</h2>
       <div class="rsvp">
         ${Object.entries(RSVP_LABELS)
           .map(
@@ -299,15 +351,29 @@ function renderSpace(eventId, data) {
     </section>
 
     <section class="card">
-      <h2>Guests <span class="count">${guests.length}</span></h2>
-      ${guestList("going", "Going")}
-      ${guestList("maybe", "Maybe")}
-      ${guestList("not_going", "Can't go")}
-      ${guestList("none", "Haven't answered")}
+      <h2>Invités <span class="count">${guests.length}</span></h2>
+      ${guestList("going", "Viennent")}
+      ${guestList("maybe", "Peut-être")}
+      ${guestList("not_going", "Ne viennent pas")}
+      ${guestList("none", "Pas encore répondu")}
     </section>
 
-    <p class="center small"><button class="link" id="rename">Change my name</button></p>
+    ${musicSection(event, me)}
+
+    <section class="card">
+      <h2>💬 Commentaires</h2>
+      <ul class="comments" id="comments"></ul>
+      <form id="comment-form" class="comment-form" autocomplete="off">
+        <textarea name="body" rows="2" maxlength="1000" required placeholder="Écrivez un mot à tout le monde…"></textarea>
+        <button class="primary" type="submit">Envoyer</button>
+      </form>
+    </section>
+
+    <p class="center small"><button class="link" id="rename">Changer mon prénom</button></p>
   `;
+
+  setupComments(eventId, me, data.comments || [], identity.token);
+  document.getElementById("add-playlist")?.addEventListener("click", () => renderEdit(eventId, data));
 
   for (const btn of app.querySelectorAll("[data-rsvp]")) {
     btn.addEventListener("click", () =>
@@ -319,7 +385,7 @@ function renderSpace(eventId, data) {
   }
 
   document.getElementById("rename").addEventListener("click", async () => {
-    const name = prompt("Your name", me.name)?.trim();
+    const name = prompt("Votre prénom", me.name)?.trim();
     if (!name || name === me.name) return;
     try {
       renderSpace(eventId, await api(`/parties/${eventId}/me`, { method: "PATCH", body: { name }, token: identity.token }));
@@ -336,7 +402,7 @@ function renderSpace(eventId, data) {
         document.getElementById("share-url").select();
         document.execCommand("copy");
       }
-      toast("Link copied");
+      toast("Lien copié");
     });
     const native = document.getElementById("native-share");
     if (navigator.share) {
@@ -349,21 +415,124 @@ function renderSpace(eventId, data) {
   }
 }
 
+function musicSection(event, me) {
+  if (!event.playlist_url) {
+    return me.isHost
+      ? `<section class="card"><h2>🎵 Playlist</h2>
+           <p class="muted small">Ajoutez une playlist Spotify pour que les invités puissent l'écouter et y ajouter leurs chansons.</p>
+           <button id="add-playlist">Ajouter une playlist</button></section>`
+      : "";
+  }
+  const embed = spotifyEmbed(event.playlist_url);
+  return `<section class="card music">
+      <h2>🎵 Playlist</h2>
+      ${event.playlist_note ? `<p class="playlist-note">${esc(event.playlist_note)}</p>` : ""}
+      ${
+        embed
+          ? `<iframe class="spotify" src="${esc(embed)}" height="352" loading="lazy" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" title="Spotify playlist"></iframe>`
+          : ""
+      }
+      <a class="btn spotify-btn" href="${esc(event.playlist_url)}" target="_blank" rel="noopener">${musicLabel(event.playlist_url)}</a>
+    </section>`;
+}
+
+// ---------- comment wall ----------
+// Not realtime: we refresh every few seconds while the event page is open.
+
+let commentsTimer = null;
+
+function stopCommentsPolling() {
+  clearInterval(commentsTimer);
+  commentsTimer = null;
+}
+
+function setupComments(eventId, me, initial, token) {
+  stopCommentsPolling();
+  const list = document.getElementById("comments");
+  const form = document.getElementById("comment-form");
+  let lastKey = "";
+
+  const draw = (comments) => {
+    const key = comments.map((c) => c.id + c.name).join();
+    if (key === lastKey) {
+      // Same comments: just refresh the "x min ago" labels.
+      for (const el of list.querySelectorAll("[data-at]")) el.textContent = formatAgo(el.dataset.at);
+      return;
+    }
+    const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+    lastKey = key;
+    list.innerHTML = comments.length
+      ? comments
+          .map(
+            (c) => `<li class="${c.guestId === me.id ? "mine" : ""}">
+              <div class="comment-meta"><strong>${esc(c.name)}</strong>
+                <span class="muted small" data-at="${esc(c.createdAt)}">${esc(formatAgo(c.createdAt))}</span>
+                ${c.guestId === me.id || me.isHost ? `<button class="link small delete" data-delete="${esc(c.id)}" aria-label="Supprimer le commentaire">Supprimer</button>` : ""}
+              </div>
+              <p>${esc(c.body)}</p></li>`,
+          )
+          .join("")
+      : `<li class="empty muted small">Pas encore de commentaires. Lancez-vous !</li>`;
+    if (nearBottom || !list.dataset.ready) list.scrollTop = list.scrollHeight;
+    list.dataset.ready = "1";
+  };
+  draw(initial);
+
+  const refresh = async () => {
+    if (document.hidden || !document.body.contains(list)) return;
+    try {
+      draw((await api(`/parties/${eventId}/comments`, { token })).comments);
+    } catch {
+      // Offline for a moment: try again on the next tick.
+    }
+  };
+  commentsTimer = setInterval(refresh, 8000);
+
+  list.addEventListener("click", async (ev) => {
+    const btn = ev.target.closest("[data-delete]");
+    if (!btn || !confirm("Supprimer ce commentaire ?")) return;
+    withBusy(btn, async () => {
+      draw((await api(`/parties/${eventId}/comments/${btn.dataset.delete}`, { method: "DELETE", token })).comments);
+    });
+  });
+
+  const textarea = form.querySelector("textarea");
+  textarea.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && matchMedia("(pointer: fine)").matches) {
+      ev.preventDefault();
+      form.requestSubmit();
+    }
+  });
+  form.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const body = textarea.value.trim();
+    if (!body) return;
+    withBusy(form.querySelector("button"), async () => {
+      const { comments } = await api(`/parties/${eventId}/comments`, { method: "POST", body: { body }, token });
+      textarea.value = "";
+      lastKey = "";
+      list.dataset.ready = "";
+      draw(comments);
+    });
+  });
+}
+
 function renderEdit(eventId, data) {
   const { event } = data;
   const identity = getIdentity(eventId);
   app.innerHTML = `
-    <nav class="topbar"><a href="/e/${esc(eventId)}" id="back">← Back</a></nav>
+    <nav class="topbar"><a href="/e/${esc(eventId)}" id="back">← Retour</a></nav>
     <form id="edit-form" class="card stack" autocomplete="off">
-      <h2>Edit event</h2>
-      <label>Title <input name="title" required maxlength="120" value="${esc(event.title)}"></label>
+      <h2>Modifier l'événement</h2>
+      <label>Titre <input name="title" required maxlength="120" value="${esc(event.title)}"></label>
       <div class="row">
         <label>Date <input name="date" type="date" required value="${esc(event.date)}"></label>
-        <label>Time <input name="time" type="time" value="${esc(event.time)}"></label>
+        <label>Heure <input name="time" type="time" value="${esc(event.time)}"></label>
       </div>
-      <label>Address <input name="address" maxlength="300" value="${esc(event.address)}"></label>
-      <label>Details <textarea name="description" rows="4" maxlength="2000">${esc(event.description)}</textarea></label>
-      <button class="primary" type="submit">Save</button>
+      <label>Adresse <input name="address" maxlength="300" value="${esc(event.address)}"></label>
+      <label>Détails <textarea name="description" rows="4" maxlength="2000">${esc(event.description)}</textarea></label>
+      ${extraFields(event)}
+      <button class="primary" type="submit">Enregistrer</button>
     </form>
   `;
   document.getElementById("back").addEventListener("click", (ev) => {
@@ -376,18 +545,19 @@ function renderEdit(eventId, data) {
     const body = Object.fromEntries(new FormData(form));
     withBusy(form.querySelector("button"), async () => {
       renderSpace(eventId, await api(`/parties/${eventId}`, { method: "PATCH", body, token: identity.token }));
-      toast("Saved");
+      toast("Enregistré");
     });
   });
 }
 
 function renderMessage(text) {
-  app.innerHTML = `<section class="card center stack"><div class="emoji">🤷</div><p>${esc(text)}</p><a class="btn primary" href="/">Create an event</a></section>`;
+  app.innerHTML = `<section class="card center stack"><div class="emoji">🤷</div><p>${esc(text)}</p><a class="btn primary" href="/">Créer un événement</a></section>`;
 }
 
 // ---------- router ----------
 
 function route() {
+  stopCommentsPolling();
   const match = location.pathname.match(/^\/e\/([A-Za-z0-9_-]+)\/?$/);
   window.scrollTo(0, 0);
   if (match) renderEvent(match[1]);

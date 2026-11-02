@@ -10,6 +10,9 @@ type EventRow = {
   date: string;
   time: string;
   address: string;
+  theme: string;
+  playlist_url: string;
+  playlist_note: string;
 };
 type GuestRow = {
   id: string;
@@ -20,9 +23,11 @@ type GuestRow = {
   created_at: string;
 };
 type Rsvp = "going" | "maybe" | "not_going";
+type CommentRow = { id: string; guest_id: string; name: string; body: string; created_at: string };
 
 const RSVPS: Rsvp[] = ["going", "maybe", "not_going"];
-const LIMITS = { title: 120, description: 2000, address: 300, name: 40 };
+const LIMITS = { title: 120, description: 2000, address: 300, name: 40, theme: 200, url: 500, note: 300, comment: 1000 };
+const EVENT_COLS = "id, title, description, date, time, address, theme, playlist_url, playlist_note";
 
 const app = new Hono<App>().basePath("/api");
 
@@ -40,28 +45,58 @@ async function sha256(text: string): Promise<string> {
 }
 
 class HttpError extends Error {
-  constructor(public status: 400 | 401 | 403 | 404, message: string) {
+  constructor(public status: 400 | 401 | 403 | 404 | 429, message: string) {
     super(message);
   }
 }
 
+// Field names as guests see them, for error messages (the UI is in French).
+const LABELS: Record<string, string> = {
+  title: "Titre",
+  description: "Détails",
+  date: "Date",
+  time: "Heure",
+  address: "Adresse",
+  name: "Prénom",
+  hostName: "Votre prénom",
+  theme: "Thème",
+  playlist_url: "Lien de la playlist",
+  playlist_note: "Message de la playlist",
+  body: "Commentaire",
+};
+const label = (field: string) => `Le champ « ${LABELS[field] ?? field} »`;
+
 function str(value: unknown, field: string, max: number, required = false): string {
   const s = typeof value === "string" ? value.trim() : "";
-  if (required && !s) throw new HttpError(400, `${field} is required`);
-  if (s.length > max) throw new HttpError(400, `${field} is too long (max ${max})`);
+  if (required && !s) throw new HttpError(400, `${label(field)} est obligatoire`);
+  if (s.length > max) throw new HttpError(400, `${label(field)} est trop long (max ${max} caractères)`);
   return s;
 }
 
 function dateStr(value: unknown): string {
   const s = str(value, "date", 10, true);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new HttpError(400, "date must be YYYY-MM-DD");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new HttpError(400, "La date doit être au format AAAA-MM-JJ");
   return s;
 }
 
 function timeStr(value: unknown): string {
   const s = str(value, "time", 5);
-  if (s && !/^\d{2}:\d{2}$/.test(s)) throw new HttpError(400, "time must be HH:MM");
+  if (s && !/^\d{2}:\d{2}$/.test(s)) throw new HttpError(400, "L'heure doit être au format HH:MM");
   return s;
+}
+
+// Optional link (e.g. a Spotify playlist). Only http(s), so it is safe to put in an href.
+function urlStr(value: unknown, field: string): string {
+  const s = str(value, field, LIMITS.url);
+  if (!s) return "";
+  let url: URL;
+  try {
+    url = new URL(s);
+  } catch {
+    throw new HttpError(400, `${label(field)} doit être un lien commençant par https://`);
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") throw new HttpError(400, `${label(field)} doit être un lien commençant par https://`);
+  return url.toString();
 }
 
 async function body(c: Context<App>): Promise<Record<string, unknown>> {
@@ -69,16 +104,16 @@ async function body(c: Context<App>): Promise<Record<string, unknown>> {
     const json = await c.req.json();
     return json && typeof json === "object" ? json : {};
   } catch {
-    throw new HttpError(400, "Invalid JSON body");
+    throw new HttpError(400, "Requête invalide");
   }
 }
 
 async function getEvent(db: D1Database, id: string): Promise<EventRow> {
   const row = await db
-    .prepare("SELECT id, title, description, date, time, address FROM events WHERE id = ?")
+    .prepare(`SELECT ${EVENT_COLS} FROM events WHERE id = ?`)
     .bind(id)
     .first<EventRow>();
-  if (!row) throw new HttpError(404, "Event not found");
+  if (!row) throw new HttpError(404, "Événement introuvable");
   return row;
 }
 
@@ -97,7 +132,7 @@ async function currentGuest(c: Context<App>, eventId: string): Promise<GuestRow 
 
 async function requireGuest(c: Context<App>, eventId: string): Promise<GuestRow> {
   const guest = await currentGuest(c, eventId);
-  if (!guest) throw new HttpError(401, "Join the event first");
+  if (!guest) throw new HttpError(401, "Rejoignez d'abord l'événement");
   return guest;
 }
 
@@ -112,6 +147,25 @@ async function insertGuest(db: D1Database, eventId: string, name: string, isHost
   };
 }
 
+function publicComment(c: CommentRow) {
+  return { id: c.id, guestId: c.guest_id, name: c.name, body: c.body, createdAt: c.created_at };
+}
+
+// Latest comments, oldest first. Names come from the guests table so renames show up.
+async function listComments(db: D1Database, eventId: string) {
+  const { results } = await db
+    .prepare(
+      `SELECT * FROM (
+         SELECT c.id, c.guest_id, g.name, c.body, c.created_at, c.rowid AS seq
+         FROM comments c JOIN guests g ON g.id = c.guest_id
+         WHERE c.event_id = ? ORDER BY c.rowid DESC LIMIT 200
+       ) ORDER BY seq`,
+    )
+    .bind(eventId)
+    .all<CommentRow>();
+  return results.map(publicComment);
+}
+
 function publicGuest(g: GuestRow) {
   return { id: g.id, name: g.name, isHost: g.is_host === 1, rsvp: g.rsvp };
 }
@@ -123,7 +177,7 @@ async function fullEvent(db: D1Database, event: EventRow, me: GuestRow) {
     )
     .bind(event.id)
     .all<GuestRow>();
-  return { event, me: publicGuest(me), guests: results.map(publicGuest) };
+  return { event, me: publicGuest(me), guests: results.map(publicGuest), comments: await listComments(db, event.id) };
 }
 
 // ---------- routes ----------
@@ -138,13 +192,26 @@ app.post("/parties", async (c) => {
     date: dateStr(b.date),
     time: timeStr(b.time),
     address: str(b.address, "address", LIMITS.address),
+    theme: str(b.theme, "theme", LIMITS.theme),
+    playlist_url: urlStr(b.playlist_url, "playlist_url"),
+    playlist_note: str(b.playlist_note, "playlist_note", LIMITS.note),
   };
   const hostName = str(b.hostName, "hostName", LIMITS.name, true);
   const host = await insertGuest(c.env.DB, event.id, hostName, true);
   await c.env.DB.batch([
     c.env.DB.prepare(
-      "INSERT INTO events (id, title, description, date, time, address) VALUES (?, ?, ?, ?, ?, ?)",
-    ).bind(event.id, event.title, event.description, event.date, event.time, event.address),
+      `INSERT INTO events (${EVENT_COLS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      event.id,
+      event.title,
+      event.description,
+      event.date,
+      event.time,
+      event.address,
+      event.theme,
+      event.playlist_url,
+      event.playlist_note,
+    ),
     host.stmt,
   ]);
   return c.json({ eventId: event.id, guest: host.guest }, 201);
@@ -164,7 +231,7 @@ app.get("/parties/:id", async (c) => {
     .bind(event.id)
     .first<{ host: string | null; going: number }>();
   return c.json({
-    preview: { title: event.title, date: event.date, time: event.time, hostName: stats?.host, going: stats?.going ?? 0 },
+    preview: { title: event.title, date: event.date, time: event.time, theme: event.theme, hostName: stats?.host, going: stats?.going ?? 0 },
   });
 });
 
@@ -181,7 +248,7 @@ app.put("/parties/:id/rsvp", async (c) => {
   const event = await getEvent(c.env.DB, c.req.param("id"));
   const me = await requireGuest(c, event.id);
   const status = (await body(c)).status;
-  if (!RSVPS.includes(status as Rsvp)) throw new HttpError(400, "status must be going, maybe or not_going");
+  if (!RSVPS.includes(status as Rsvp)) throw new HttpError(400, "Réponse invalide (going, maybe ou not_going)");
   await c.env.DB.prepare("UPDATE guests SET rsvp = ?, updated_at = datetime('now') WHERE id = ?")
     .bind(status, me.id)
     .run();
@@ -203,7 +270,7 @@ app.patch("/parties/:id/me", async (c) => {
 app.patch("/parties/:id", async (c) => {
   const event = await getEvent(c.env.DB, c.req.param("id"));
   const me = await requireGuest(c, event.id);
-  if (me.is_host !== 1) throw new HttpError(403, "Only the host can edit the event");
+  if (me.is_host !== 1) throw new HttpError(403, "Seul l'hôte peut modifier l'événement");
   const b = await body(c);
   const next: EventRow = {
     ...event,
@@ -212,21 +279,72 @@ app.patch("/parties/:id", async (c) => {
     date: "date" in b ? dateStr(b.date) : event.date,
     time: "time" in b ? timeStr(b.time) : event.time,
     address: "address" in b ? str(b.address, "address", LIMITS.address) : event.address,
+    theme: "theme" in b ? str(b.theme, "theme", LIMITS.theme) : event.theme,
+    playlist_url: "playlist_url" in b ? urlStr(b.playlist_url, "playlist_url") : event.playlist_url,
+    playlist_note: "playlist_note" in b ? str(b.playlist_note, "playlist_note", LIMITS.note) : event.playlist_note,
   };
   await c.env.DB.prepare(
-    "UPDATE events SET title = ?, description = ?, date = ?, time = ?, address = ?, updated_at = datetime('now') WHERE id = ?",
+    `UPDATE events SET title = ?, description = ?, date = ?, time = ?, address = ?,
+       theme = ?, playlist_url = ?, playlist_note = ?, updated_at = datetime('now') WHERE id = ?`,
   )
-    .bind(next.title, next.description, next.date, next.time, next.address, event.id)
+    .bind(
+      next.title,
+      next.description,
+      next.date,
+      next.time,
+      next.address,
+      next.theme,
+      next.playlist_url,
+      next.playlist_note,
+      event.id,
+    )
     .run();
   return c.json(await fullEvent(c.env.DB, next, me));
 });
 
-app.notFound((c) => c.json({ error: "Not found" }, 404));
+// ---------- comment wall ----------
+
+app.get("/parties/:id/comments", async (c) => {
+  const event = await getEvent(c.env.DB, c.req.param("id"));
+  await requireGuest(c, event.id);
+  return c.json({ comments: await listComments(c.env.DB, event.id) });
+});
+
+app.post("/parties/:id/comments", async (c) => {
+  const event = await getEvent(c.env.DB, c.req.param("id"));
+  const me = await requireGuest(c, event.id);
+  const text = str((await body(c)).body, "body", LIMITS.comment, true);
+  const recent = await c.env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM comments WHERE guest_id = ? AND created_at > datetime('now', '-1 minute')",
+  )
+    .bind(me.id)
+    .first<{ n: number }>();
+  if ((recent?.n ?? 0) >= 20) throw new HttpError(429, "Doucement ! Réessayez dans une minute");
+  await c.env.DB.prepare("INSERT INTO comments (id, event_id, guest_id, body) VALUES (?, ?, ?, ?)")
+    .bind(randomId(9), event.id, me.id, text)
+    .run();
+  return c.json({ comments: await listComments(c.env.DB, event.id) }, 201);
+});
+
+// Authors can delete their own comments; the host can delete any.
+app.delete("/parties/:id/comments/:commentId", async (c) => {
+  const event = await getEvent(c.env.DB, c.req.param("id"));
+  const me = await requireGuest(c, event.id);
+  const row = await c.env.DB.prepare("SELECT guest_id FROM comments WHERE id = ? AND event_id = ?")
+    .bind(c.req.param("commentId"), event.id)
+    .first<{ guest_id: string }>();
+  if (!row) throw new HttpError(404, "Commentaire introuvable");
+  if (row.guest_id !== me.id && me.is_host !== 1) throw new HttpError(403, "Vous ne pouvez supprimer que vos propres commentaires");
+  await c.env.DB.prepare("DELETE FROM comments WHERE id = ?").bind(c.req.param("commentId")).run();
+  return c.json({ comments: await listComments(c.env.DB, event.id) });
+});
+
+app.notFound((c) => c.json({ error: "Introuvable" }, 404));
 
 app.onError((err, c) => {
   if (err instanceof HttpError) return c.json({ error: err.message }, err.status);
   console.error(err);
-  return c.json({ error: "Something went wrong" }, 500);
+  return c.json({ error: "Une erreur est survenue" }, 500);
 });
 
 export default app;
