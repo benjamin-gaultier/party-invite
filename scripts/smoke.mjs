@@ -66,6 +66,24 @@ check("guest cannot delete host's comment", (await call(`/parties/${eventId}/com
 const del = await call(`/parties/${eventId}/comments/${listed.data.comments[0].id}`, { method: "DELETE", token: host.token });
 check("host can delete any comment", del.status === 200 && del.data.comments.length === 1);
 
+// Background picture
+const img = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 5]);
+const putBg = (token, type = "image/jpeg", bytes = img) =>
+  fetch(`${base}/api/parties/${eventId}/background`, { method: "PUT", headers: { "Content-Type": type, Authorization: `Bearer ${token}` }, body: bytes });
+check("guest cannot set background", (await putBg(guest.token)).status === 403);
+check("non-image background rejected", (await putBg(host.token, "text/html")).status === 415);
+check("huge background rejected", (await putBg(host.token, "image/jpeg", new Uint8Array(1_100_000))).status === 413);
+const bgSet = await putBg(host.token);
+const bgData = await bgSet.json();
+check("host sets background", bgSet.status === 200 && bgData.event.background_version === 1);
+const bgGet = await fetch(`${base}/api/parties/${eventId}/background?v=1`);
+const bgBytes = new Uint8Array(await bgGet.arrayBuffer());
+check("background served as image", bgGet.headers.get("content-type") === "image/jpeg" && bgBytes.length === img.length && bgBytes[0] === 0xff);
+check("join preview knows the background", (await call(`/parties/${eventId}`)).data.preview?.background_version === 1);
+check("second upload bumps version", (await (await putBg(host.token)).json()).event.background_version === 2);
+const bgDel = await call(`/parties/${eventId}/background`, { method: "DELETE", token: host.token });
+check("host removes background", bgDel.data.event?.background_version === 0 && (await fetch(`${base}/api/parties/${eventId}/background`)).status === 404);
+
 const otherEvent = await call("/parties", { method: "POST", body: { title: "Other", date: "2030-01-01", hostName: "X" } });
 const cross = await call(`/parties/${otherEvent.data.eventId}`, { token: guest.token });
 check("token does not work on another event", !!cross.data.preview);

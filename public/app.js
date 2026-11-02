@@ -163,9 +163,56 @@ function extraFields(event = {}) {
       </fieldset>`;
 }
 
+// ---------- background picture ----------
+
+function backgroundUrl(eventId, version) {
+  return `/api/parties/${eventId}/background?v=${version}`;
+}
+
+// Shows the event's picture behind the page, or the plain background when version is 0.
+function setBackground(eventId, version) {
+  const on = !!(eventId && version);
+  document.body.classList.toggle("has-bg", on);
+  if (on) document.body.style.setProperty("--bg-image", `url("${backgroundUrl(eventId, version)}")`);
+  else document.body.style.removeProperty("--bg-image");
+}
+
+// Shrinks a photo to at most 1600px and re-encodes it as JPEG (well under 1 MB).
+async function resizeImage(file) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close?.();
+  for (const quality of [0.82, 0.65, 0.5]) {
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+    if (blob && blob.size <= 950_000) return blob;
+  }
+  throw new Error("Cette image est trop lourde, essayez-en une autre.");
+}
+
+async function uploadBackground(eventId, token, blob) {
+  let res;
+  try {
+    res = await fetch(`/api/parties/${eventId}/background`, {
+      method: "PUT",
+      headers: { "Content-Type": blob.type, Authorization: `Bearer ${token}` },
+      body: blob,
+    });
+  } catch {
+    throw new Error("Impossible de joindre le serveur. Vérifiez votre connexion.");
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Erreur (${res.status})`);
+  return data;
+}
+
 // ---------- home: create event + your events ----------
 
 function renderHome() {
+  setBackground(null, 0);
   document.title = "Party Invite";
   const store = loadStore();
   const today = new Date().toISOString().slice(0, 10);
@@ -256,6 +303,7 @@ async function renderEvent(eventId) {
 }
 
 function renderJoin(eventId, preview) {
+  setBackground(eventId, preview.background_version);
   document.title = `${preview.title} · Party Invite`;
   const store = loadStore();
   app.innerHTML = `
@@ -292,6 +340,7 @@ const RSVP_EMOJI = { going: "🥳", maybe: "🤔", not_going: "😢" };
 
 function renderSpace(eventId, data) {
   const { event, me, guests } = data;
+  setBackground(eventId, event.background_version);
   const identity = getIdentity(eventId);
   // Keep the local copy fresh for "Your events".
   setIdentity(eventId, { name: me.name, title: event.title, date: event.date, time: event.time, justCreated: false });
@@ -335,7 +384,7 @@ function renderSpace(eventId, data) {
       ${event.theme ? `<p class="theme"><span class="muted small">Thème</span><br>🎭 <strong>${esc(event.theme)}</strong></p>` : ""}
       ${event.address ? `<p>📍 <a href="${mapsUrl(event.address)}" target="_blank" rel="noopener">${esc(event.address)}</a></p>` : ""}
       ${event.description ? `<p class="description">${esc(event.description)}</p>` : ""}
-      ${me.isHost ? `<button class="link" id="edit">Modifier les détails</button>` : ""}
+      ${me.isHost ? `<button class="link" id="edit">Modifier l'événement et l'image de fond</button>` : ""}
     </section>
 
     <section class="card">
@@ -651,6 +700,7 @@ function setupComments(eventId, me, initial, token) {
 function renderEdit(eventId, data) {
   const { event } = data;
   const identity = getIdentity(eventId);
+  let current = data; // updated when the background picture changes
   app.innerHTML = `
     <nav class="topbar"><a href="/e/${esc(eventId)}" id="back">← Retour</a></nav>
     <form id="edit-form" class="card stack" autocomplete="off">
@@ -665,11 +715,46 @@ function renderEdit(eventId, data) {
       ${extraFields(event)}
       <button class="primary" type="submit">Enregistrer</button>
     </form>
+    <section class="card stack" id="bg-card"></section>
   `;
   document.getElementById("back").addEventListener("click", (ev) => {
     ev.preventDefault();
-    renderSpace(eventId, data);
+    renderSpace(eventId, current);
   });
+
+  const bgCard = document.getElementById("bg-card");
+  const drawBackgroundCard = () => {
+    const version = current.event.background_version;
+    bgCard.innerHTML = `
+      <h2>🖼️ Image de fond</h2>
+      <p class="muted small">Une photo derrière la page de l'événement, visible par tous les invités.</p>
+      ${version ? `<img class="bg-preview" src="${esc(backgroundUrl(eventId, version))}" alt="Image de fond actuelle">` : ""}
+      <label class="btn file-btn">${version ? "Changer la photo" : "Choisir une photo"}
+        <input type="file" accept="image/*" id="bg-file" hidden>
+      </label>
+      ${version ? `<button type="button" class="link small" id="bg-remove">Retirer l'image de fond</button>` : ""}`;
+    const fileInput = document.getElementById("bg-file");
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      withBusy(fileInput.closest("label"), async () => {
+        current = await uploadBackground(eventId, identity.token, await resizeImage(file));
+        setBackground(eventId, current.event.background_version);
+        drawBackgroundCard();
+        toast("Image de fond mise à jour");
+      });
+    });
+    document.getElementById("bg-remove")?.addEventListener("click", (ev) => {
+      if (!confirm("Retirer l'image de fond ?")) return;
+      withBusy(ev.currentTarget, async () => {
+        current = await api(`/parties/${eventId}/background`, { method: "DELETE", token: identity.token });
+        setBackground(eventId, 0);
+        drawBackgroundCard();
+        toast("Image de fond retirée");
+      });
+    });
+  };
+  drawBackgroundCard();
   const form = document.getElementById("edit-form");
   form.addEventListener("submit", (ev) => {
     ev.preventDefault();
@@ -682,6 +767,7 @@ function renderEdit(eventId, data) {
 }
 
 function renderMessage(text) {
+  setBackground(null, 0);
   app.innerHTML = `<section class="card center stack"><div class="emoji">🤷</div><p>${esc(text)}</p><a class="btn primary" href="/">Créer un événement</a></section>`;
 }
 

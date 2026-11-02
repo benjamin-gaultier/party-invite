@@ -22,6 +22,7 @@ type EventRow = {
   theme: string;
   playlist_url: string;
   playlist_note: string;
+  background_version?: number; // 0 or missing = no background picture
 };
 type GuestRow = {
   id: string;
@@ -54,7 +55,7 @@ async function sha256(text: string): Promise<string> {
 }
 
 class HttpError extends Error {
-  constructor(public status: 400 | 401 | 403 | 404 | 409 | 429 | 502 | 503, message: string) {
+  constructor(public status: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 429 | 502 | 503, message: string) {
     super(message);
   }
 }
@@ -119,7 +120,7 @@ async function body(c: Context<App>): Promise<Record<string, unknown>> {
 
 async function getEvent(db: D1Database, id: string): Promise<EventRow> {
   const row = await db
-    .prepare(`SELECT ${EVENT_COLS} FROM events WHERE id = ?`)
+    .prepare(`SELECT ${EVENT_COLS}, background_version FROM events WHERE id = ?`)
     .bind(id)
     .first<EventRow>();
   if (!row) throw new HttpError(404, "Événement introuvable");
@@ -247,7 +248,7 @@ app.get("/parties/:id", async (c) => {
     .bind(event.id)
     .first<{ host: string | null; going: number }>();
   return c.json({
-    preview: { title: event.title, date: event.date, time: event.time, theme: event.theme, hostName: stats?.host, going: stats?.going ?? 0 },
+    preview: { title: event.title, date: event.date, time: event.time, theme: event.theme, background_version: event.background_version ?? 0, hostName: stats?.host, going: stats?.going ?? 0 },
   });
 });
 
@@ -357,6 +358,58 @@ app.delete("/parties/:id/comments/:commentId", async (c) => {
   if (row.guest_id !== me.id && me.is_host !== 1) throw new HttpError(403, "Vous ne pouvez supprimer que vos propres commentaires");
   await c.env.DB.prepare("DELETE FROM comments WHERE id = ?").bind(c.req.param("commentId")).run();
   return c.json({ comments: await listComments(c.env.DB, event.id) });
+});
+
+// ---------- background picture ----------
+// The browser resizes the photo before upload; we store the bytes in D1.
+
+const BACKGROUND_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const BACKGROUND_MAX_BYTES = 1_000_000;
+
+// Public like the join screen: anyone with the event link can see it.
+app.get("/parties/:id/background", async (c) => {
+  const row = await c.env.DB.prepare("SELECT mime, data FROM event_backgrounds WHERE event_id = ?")
+    .bind(c.req.param("id"))
+    .first<{ mime: string; data: ArrayBuffer | number[] }>();
+  if (!row) throw new HttpError(404, "Pas d'image de fond");
+  const bytes = row.data instanceof ArrayBuffer ? new Uint8Array(row.data) : Uint8Array.from(row.data);
+  return new Response(bytes, {
+    headers: {
+      "Content-Type": row.mime,
+      // URLs carry ?v=<version>, so a new picture gets a new URL.
+      "Cache-Control": c.req.query("v") ? "public, max-age=31536000, immutable" : "no-cache",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+});
+
+app.put("/parties/:id/background", async (c) => {
+  const event = await getEvent(c.env.DB, c.req.param("id"));
+  const me = await requireGuest(c, event.id);
+  if (me.is_host !== 1) throw new HttpError(403, "Seul l'hôte peut changer l'image de fond");
+  const mime = (c.req.header("Content-Type") ?? "").split(";")[0].trim();
+  if (!BACKGROUND_TYPES.includes(mime)) throw new HttpError(415, "Format d'image non pris en charge (JPEG, PNG ou WebP)");
+  const data = await c.req.arrayBuffer();
+  if (data.byteLength === 0) throw new HttpError(400, "Image vide");
+  if (data.byteLength > BACKGROUND_MAX_BYTES) throw new HttpError(413, "Image trop lourde (1 Mo max)");
+  await c.env.DB.batch([
+    c.env.DB.prepare("INSERT OR REPLACE INTO event_backgrounds (event_id, mime, data) VALUES (?, ?, ?)").bind(event.id, mime, data),
+    c.env.DB.prepare(
+      "UPDATE events SET background_version = background_version + 1, updated_at = datetime('now') WHERE id = ?",
+    ).bind(event.id),
+  ]);
+  return c.json(await fullEvent(c.env, await getEvent(c.env.DB, event.id), me));
+});
+
+app.delete("/parties/:id/background", async (c) => {
+  const event = await getEvent(c.env.DB, c.req.param("id"));
+  const me = await requireGuest(c, event.id);
+  if (me.is_host !== 1) throw new HttpError(403, "Seul l'hôte peut changer l'image de fond");
+  await c.env.DB.batch([
+    c.env.DB.prepare("DELETE FROM event_backgrounds WHERE event_id = ?").bind(event.id),
+    c.env.DB.prepare("UPDATE events SET background_version = 0, updated_at = datetime('now') WHERE id = ?").bind(event.id),
+  ]);
+  return c.json(await fullEvent(c.env, { ...event, background_version: 0 }, me));
 });
 
 // ---------- Spotify: guests add songs to the host's playlist ----------
