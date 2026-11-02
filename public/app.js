@@ -490,7 +490,7 @@ function renderJoin(eventId, preview) {
     ${eventHero(
       eventId,
       preview,
-      `<p class="hero-invite">💌 ${preview.hostName ? `${esc(preview.hostName)} vous invite à` : "Vous êtes invité·e à"}</p>`,
+      `<p class="hero-invite">💌 ${preview.hostName ? `${esc(preview.hostName)} vous ${preview.hostName.includes(" et ") ? "invitent" : "invite"} à` : "Vous êtes invité·e à"}</p>`,
     )}
     ${preview.going ? `<p class="center muted small going-line">🥳 ${preview.going} ${preview.going > 1 ? "personnes viennent" : "personne vient"} déjà</p>` : ""}
     <form id="join" class="card stack" autocomplete="off">
@@ -532,7 +532,12 @@ function renderSpace(eventId, data) {
       ? `<div class="guest-group"><h3>${label} <span class="count">${groups[key].length}</span></h3>
          <ul class="guests">${groups[key]
            .map(
-             (g) => `<li>${avatar(g.name, "sm")}${esc(g.name)}${g.isHost ? ' <span class="badge">hôte</span>' : ""}${g.id === me.id ? ' <span class="badge you">vous</span>' : ""}</li>`,
+             (g) => {
+               const inner = `${avatar(g.name, "sm")}${esc(g.name)}${g.isHost ? ' <span class="badge">hôte</span>' : ""}${g.id === me.id ? ' <span class="badge you">vous</span>' : ""}`;
+               return me.isHost && g.id !== me.id
+                 ? `<li><button class="guest-chip" data-host-toggle="${esc(g.id)}" data-name="${esc(g.name)}" data-is-host="${g.isHost ? 1 : 0}">${inner}</button></li>`
+                 : `<li>${inner}</li>`;
+             },
            )
            .join("")}</ul></div>`
       : "";
@@ -593,6 +598,7 @@ function renderSpace(eventId, data) {
       ${guestList("maybe", "Peut-être")}
       ${guestList("not_going", "Ne viennent pas")}
       ${guestList("none", "Pas encore répondu")}
+      ${me.isHost && guests.length > 1 ? `<p class="muted small">👑 Touchez un invité pour en faire un co-hôte : il pourra tout modifier comme vous.</p>` : ""}
     </section>
 
     ${musicSection(event, me, data.spotify)}
@@ -648,6 +654,17 @@ function renderSpace(eventId, data) {
   setupComments(eventId, me, data.comments || [], identity.token);
   setupMusic(eventId, data, identity.token);
   if (me.isHost) setupBackgroundControl(eventId, identity.token);
+  for (const btn of app.querySelectorAll("[data-host-toggle]")) {
+    btn.addEventListener("click", () => {
+      const makeHost = btn.dataset.isHost !== "1";
+      const name = btn.dataset.name;
+      if (!confirm(makeHost ? `Faire de ${name} un co-hôte ? Il pourra modifier l'événement, les couleurs et la playlist.` : `Retirer ${name} des hôtes ?`)) return;
+      withBusy(btn, async () => {
+        renderSpace(eventId, await api(`/parties/${eventId}/guests/${btn.dataset.hostToggle}/host`, { method: "PUT", body: { isHost: makeHost }, token: identity.token }));
+        toast(makeHost ? `${name} est co-hôte 👑` : `${name} n'est plus hôte`);
+      });
+    });
+  }
 
   for (const btn of app.querySelectorAll("[data-rsvp]")) {
     btn.addEventListener("click", () =>
