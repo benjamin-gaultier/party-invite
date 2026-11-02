@@ -714,9 +714,19 @@ function musicSection(event, me, spotify = {}) {
 
   const embed = spotifyEmbed(event.playlist_url);
   const songs = spotify.songs || [];
+  const notConnected = spotify.enabled && !spotify.connected;
   return `<section class="card music">
       <h2>🎵 Playlist</h2>
       ${event.playlist_note ? `<p class="playlist-note">${esc(event.playlist_note)}</p>` : ""}
+      ${
+        notConnected && host
+          ? `<div class="connect-box highlight"><p><strong>Activez l'ajout de chansons</strong></p>
+               <p class="small">Pour l'instant, les invités voient la playlist mais ne peuvent rien y ajouter. Connectez le compte Spotify propriétaire de cette playlist et ils pourront ajouter leurs chansons ici, même sans Spotify.</p>
+               <button class="spotify-btn" id="spotify-connect">Connecter Spotify</button></div>`
+          : notConnected
+            ? `<p class="muted small">🎧 L'ajout de chansons depuis l'appli n'est pas encore activé par l'hôte.</p>`
+            : ""
+      }
       ${
         spotify.connected
           ? `<form id="song-search" class="song-search" role="search" autocomplete="off">
@@ -737,7 +747,7 @@ function musicSection(event, me, spotify = {}) {
              <ul class="tracks">${songs.map((t) => trackItem(t, `par ${esc(t.addedBy)}`)).join("")}</ul>`
           : ""
       }
-      ${hostControls}
+      ${notConnected ? "" : hostControls}
     </section>`;
 }
 
