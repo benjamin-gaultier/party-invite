@@ -401,3 +401,8 @@ body.has-bg .card {
 .event-info p { margin: 0.35rem 0; }
 
 .card, .color-picker { color: var(--text); }
+
+/* Guest chips are buttons for hosts (tap to make co-host). */
+.guests li:has(.guest-chip) { padding: 0; }
+.guest-chip { all: unset; display: inline-flex; align-items: center; gap: 6px; padding: 3px 12px 3px 3px; cursor: pointer; border-radius: 999px; }
+.guest-chip:focus-visible { outline: 2px solid var(--accent); }

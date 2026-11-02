@@ -243,7 +243,7 @@ app.get("/parties/:id", async (c) => {
   if (me) return c.json(await fullEvent(c.env, event, me));
   const stats = await c.env.DB.prepare(
     `SELECT
-       (SELECT name FROM guests WHERE event_id = ?1 AND is_host = 1 LIMIT 1) AS host,
+       (SELECT group_concat(name, ' et ') FROM (SELECT name FROM guests WHERE event_id = ?1 AND is_host = 1 ORDER BY created_at)) AS host,
        (SELECT COUNT(*) FROM guests WHERE event_id = ?1 AND rsvp = 'going') AS going`,
   )
     .bind(event.id)
@@ -251,6 +251,23 @@ app.get("/parties/:id", async (c) => {
   return c.json({
     preview: { title: event.title, date: event.date, time: event.time, theme: event.theme, background_version: event.background_version ?? 0, color: event.color ?? "", hostName: stats?.host, going: stats?.going ?? 0 },
   });
+});
+
+// Hosts can make another guest a co-host (same powers), or take it back. Not themselves,
+// so an event always keeps at least one host.
+app.put("/parties/:id/guests/:guestId/host", async (c) => {
+  const event = await getEvent(c.env.DB, c.req.param("id"));
+  const me = await requireGuest(c, event.id);
+  if (me.is_host !== 1) throw new HttpError(403, "Seul l'hôte peut ajouter un co-hôte");
+  const guestId = c.req.param("guestId");
+  if (guestId === me.id) throw new HttpError(400, "Vous ne pouvez pas changer votre propre rôle");
+  const isHost = (await body(c)).isHost;
+  if (typeof isHost !== "boolean") throw new HttpError(400, "isHost doit être vrai ou faux");
+  const res = await c.env.DB.prepare("UPDATE guests SET is_host = ? WHERE id = ? AND event_id = ?")
+    .bind(isHost ? 1 : 0, guestId, event.id)
+    .run();
+  if (!res.meta.changes) throw new HttpError(404, "Invité introuvable");
+  return c.json(await fullEvent(c.env, event, me));
 });
 
 // Guest joins with just a name and gets a token back.

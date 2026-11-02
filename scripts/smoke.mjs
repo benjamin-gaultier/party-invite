@@ -84,6 +84,16 @@ check("second upload bumps version", (await (await putBg(host.token)).json()).ev
 const bgDel = await call(`/parties/${eventId}/background`, { method: "DELETE", token: host.token });
 check("host removes background", bgDel.data.event?.background_version === 0 && (await fetch(`${base}/api/parties/${eventId}/background`)).status === 404);
 
+// Co-hosts
+check("guest cannot add a co-host", (await call(`/parties/${eventId}/guests/${host.id}/host`, { method: "PUT", body: { isHost: false }, token: guest.token })).status === 403);
+check("host cannot change own role", (await call(`/parties/${eventId}/guests/${host.id}/host`, { method: "PUT", body: { isHost: false }, token: host.token })).status === 400);
+const promoted = await call(`/parties/${eventId}/guests/${guest.id}/host`, { method: "PUT", body: { isHost: true }, token: host.token });
+check("host makes a co-host", promoted.data.guests?.find((g) => g.id === guest.id)?.isHost === true);
+check("co-host can change colors", (await call(`/parties/${eventId}/color`, { method: "PUT", body: { color: "vert" }, token: guest.token })).status === 200);
+check("preview lists both hosts", (await call(`/parties/${eventId}`)).data.preview?.hostName?.includes(" et "));
+check("unknown guest -> 404", (await call(`/parties/${eventId}/guests/nope/host`, { method: "PUT", body: { isHost: true }, token: host.token })).status === 404);
+check("co-host removed", (await call(`/parties/${eventId}/guests/${guest.id}/host`, { method: "PUT", body: { isHost: false }, token: host.token })).data.guests?.find((g) => g.id === guest.id)?.isHost === false);
+
 // Event colors
 check("guest cannot change colors", (await call(`/parties/${eventId}/color`, { method: "PUT", body: { color: "metro" }, token: guest.token })).status === 403);
 check("unknown color rejected", (await call(`/parties/${eventId}/color`, { method: "PUT", body: { color: "#ff0000" }, token: host.token })).status === 400);
