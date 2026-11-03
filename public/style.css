@@ -744,3 +744,35 @@ body.has-bg .hero { border: none; }
 .mine .bubble { background: var(--accent-soft); }
 .bubble .author { color: hsl(var(--hue) 75% 74%); }
 body.light-ui .bubble .author { color: hsl(var(--hue) 60% 38%); }
+
+/* Event page as a two-column grid of tiles. Cards are full width unless the host makes them
+   half width ("Aa" › Taille); applyCardStyles writes each card's order and width. */
+.container:has(> [data-card]) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+}
+.container:has(> [data-card]) > * { grid-column: 1 / -1; min-width: 0; }
+.container:has(> [data-card]) > p.center { order: 99; }
+#app > [data-card].solo { grid-column: 1 / -1; }
+.container:has(> [data-card]) > [data-card]:not([data-card="hero"]) { container-type: inline-size; }
+.container:has(> [data-card]) > [data-card] > * + * { margin-top: 12px; }
+
+/* Narrow (half-width) tiles */
+@container (max-width: 260px) {
+  .rsvp { grid-template-columns: 1fr; }
+  .rsvp button { min-height: 48px; }
+  h2 { font-size: 1.1rem; }
+  .guests li { font-size: 0.85rem; }
+  .composer-bar { flex-wrap: wrap; }
+  .photo-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* Layout row in the "Aa" sheet */
+.card-layout-row { display: grid; grid-template-columns: 48px 1fr 44px 44px; align-items: center; gap: 8px; }
+.card-layout-row[hidden] { display: none; }
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border-radius: 14px; background: var(--fill, var(--bg)); }
+.seg button { min-height: 36px; padding: 6px 8px; border-radius: 10px; background: none; font-size: 0.9rem; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
+.card-layout-row .move { min-height: 44px; padding: 0; border-radius: 50%; font-size: 1.1rem; }
+.card-layout-row .move:disabled { opacity: 0.35; cursor: default; }
