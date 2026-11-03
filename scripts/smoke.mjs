@@ -66,6 +66,20 @@ check("guest cannot delete host's comment", (await call(`/parties/${eventId}/com
 const del = await call(`/parties/${eventId}/comments/${listed.data.comments[0].id}`, { method: "DELETE", token: host.token });
 check("host can delete any comment", del.status === 200 && del.data.comments.length === 1);
 
+// GIFs: only when the Worker has a GIPHY key (run with scripts/fake-giphy.mjs to test them).
+const gifsOn = (await call(`/parties/${eventId}`, { token: guest.token })).data.gifs;
+if (gifsOn) {
+  const trending = await call(`/parties/${eventId}/gifs`, { token: guest.token });
+  check("gif trending works and drops bad ids", trending.status === 200 && trending.data.gifs.length > 0 && trending.data.gifs.every((g) => /^[A-Za-z0-9]+$/.test(g.id)));
+  const found = await call(`/parties/${eventId}/gifs?q=danse`, { token: guest.token });
+  check("gif search works", found.status === 200 && found.data.gifs[0]?.preview.startsWith("https://"));
+} else {
+  check("gif search off without key", (await call(`/parties/${eventId}/gifs?q=x`, { token: guest.token })).status === 503);
+}
+check("gif search needs a token", (await call(`/parties/${eventId}/gifs?q=x`)).status === 401);
+const gifComment = await call(`/parties/${eventId}/comments`, { method: "POST", body: { body: "@Host trop bien 🎉\n[gif:abc123]" }, token: guest.token });
+check("comment with mention, emoji and gif is stored as-is", gifComment.data.comments.at(-1)?.body === "@Host trop bien 🎉\n[gif:abc123]");
+
 // Background picture
 const img = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 5]);
 const putBg = (token, type = "image/jpeg", bytes = img) =>

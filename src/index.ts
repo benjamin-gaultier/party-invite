@@ -9,6 +9,10 @@ type Env = {
   // Overridable for local tests against a fake Spotify (scripts/fake-spotify.mjs).
   SPOTIFY_API_URL?: string;
   SPOTIFY_ACCOUNTS_URL?: string;
+  // GIPHY API key (Worker secret). Without it the GIF button in comments is hidden.
+  GIPHY_API_KEY?: string;
+  // Overridable for local tests against a fake GIPHY.
+  GIPHY_API_URL?: string;
 };
 type App = { Bindings: Env };
 
@@ -195,6 +199,7 @@ async function fullEvent(env: Env, event: EventRow, me: GuestRow) {
     guests: results.map(publicGuest),
     comments: await listComments(db, event.id),
     spotify: await spotifyStatus(env, event.id),
+    gifs: !!env.GIPHY_API_KEY,
   };
 }
 
@@ -396,6 +401,39 @@ app.post("/parties/:id/comments", async (c) => {
     .bind(randomId(9), event.id, me.id, text)
     .run();
   return c.json({ comments: await listComments(c.env.DB, event.id) }, 201);
+});
+
+// GIF search for comments, proxied so the GIPHY key stays secret. A comment stores a GIF
+// as a "[gif:ID]" line; the app turns it into an image from media.giphy.com.
+app.get("/parties/:id/gifs", async (c) => {
+  const event = await getEvent(c.env.DB, c.req.param("id"));
+  await requireGuest(c, event.id);
+  if (!c.env.GIPHY_API_KEY) throw new HttpError(503, "Les GIFs ne sont pas activés");
+  const q = (c.req.query("q") || "").trim().slice(0, 50);
+  const base = c.env.GIPHY_API_URL || "https://api.giphy.com/v1";
+  const params = new URLSearchParams({ api_key: c.env.GIPHY_API_KEY, limit: "24", rating: "pg-13", lang: "fr" });
+  if (q) params.set("q", q);
+  const url = `${base}/gifs/${q ? "search" : "trending"}?${params}`;
+
+  // Cache results for an hour: the free GIPHY key allows about 100 searches an hour.
+  const cache = (globalThis as any).caches?.default as Cache | undefined;
+  const cacheKey = new Request(`https://gif-cache.internal/${q ? "search" : "trending"}?q=${encodeURIComponent(q.toLowerCase())}`);
+  let res = cache ? await cache.match(cacheKey) : undefined;
+  if (!res) {
+    const upstream = await fetch(url);
+    if (!upstream.ok) throw new HttpError(502, "La recherche de GIFs ne répond pas, réessayez plus tard");
+    const data = (await upstream.json()) as { data?: any[] };
+    const gifs = (data.data || [])
+      .filter((g) => typeof g?.id === "string" && /^[A-Za-z0-9]+$/.test(g.id))
+      .map((g) => {
+        const img = g.images?.fixed_width_small || g.images?.fixed_width || {};
+        return { id: g.id, title: String(g.title || ""), preview: String(img.webp || img.url || ""), width: Number(img.width) || 100, height: Number(img.height) || 100 };
+      })
+      .filter((g) => g.preview.startsWith("https://"));
+    res = new Response(JSON.stringify({ gifs }), { headers: { "Content-Type": "application/json", "Cache-Control": "max-age=3600" } });
+    if (cache) c.executionCtx.waitUntil(cache.put(cacheKey, res.clone()));
+  }
+  return new Response(res.body, { headers: { "Content-Type": "application/json" } });
 });
 
 // Authors can delete their own comments; the host can delete any.
