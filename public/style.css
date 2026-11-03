@@ -294,6 +294,7 @@ body:has(.bg-control) .toast { bottom: calc(80px + env(safe-area-inset-bottom));
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
   max-width: calc(100% - 32px);
 }
+.color-picker { max-height: calc(100dvh - 110px - env(safe-area-inset-bottom)); overflow-y: auto; }
 .color-picker[hidden] { display: none; }
 .color-picker p { margin: 0 0 8px; }
 .swatches { display: grid; grid-template-columns: repeat(5, 40px); gap: 10px; margin-bottom: 14px; }
@@ -301,6 +302,54 @@ body:has(.bg-control) .toast { bottom: calc(80px + env(safe-area-inset-bottom));
 .custom-colors label { flex-direction: row; align-items: center; gap: 10px; font-size: 0.95rem; }
 .custom-colors input[type="color"] { width: 44px !important; height: 32px; padding: 2px; border-radius: 8px; flex: none; cursor: pointer; }
 #color-save { width: 100%; }
+/* Per-card style: small "Aa" button on each card (hosts), opening a bottom sheet. */
+[data-card] { position: relative; }
+.card-edit {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  font-family: Georgia, serif;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text);
+  background: color-mix(in srgb, var(--card) 80%, transparent);
+  border: 1px solid var(--border);
+  opacity: 0.75;
+}
+.card-edit:hover, .card-edit:focus-visible { opacity: 1; }
+.event-hero .card-edit { color: #fff; background: rgba(0, 0, 0, 0.25); border-color: rgba(255, 255, 255, 0.35); }
+.card-editing { outline: 3px solid var(--accent); outline-offset: 3px; }
+.card-style-panel {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: min(560px, 100%);
+  z-index: 8;
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px calc(14px + env(safe-area-inset-bottom));
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 20px 20px 0 0;
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.3);
+}
+.card-style-panel[hidden] { display: none; }
+.card-style-head, .card-style-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.card-style-row { display: grid; grid-template-columns: 48px 1fr 44px 36px; align-items: center; gap: 8px; }
+.card-style-label { font-weight: 600; font-size: 0.9rem; }
+.card-style-row select { font: inherit; font-size: 0.95rem; min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--fill, var(--bg)); color: var(--text); }
+.card-style-row input[type="color"] { width: 44px !important; height: 36px; padding: 2px; border-radius: 8px; cursor: pointer; }
+.card-style-row [hidden] { visibility: hidden; display: inline; }
+#card-style-save { min-width: 140px; }
+body:has(.card-style-panel:not([hidden])) .bg-control { display: none; }
+body:has(.card-style-panel:not([hidden])) .container { padding-bottom: 280px; }
 .swatch {
   width: 40px;
   height: 40px;

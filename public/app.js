@@ -147,7 +147,7 @@ function confetti(from) {
 // Big header for an event: photo (or color gradient), countdown, title, date, theme.
 function eventHero(eventId, ev, extra = "") {
   const photo = ev.background_version ? backgroundUrl(eventId, ev.background_version) : "";
-  return `<header class="event-hero ${photo ? "has-photo" : ""}" ${photo ? `style="--hero-image:url('${esc(photo)}')"` : ""}>
+  return `<header data-card="hero" class="event-hero ${photo ? "has-photo" : ""}" ${photo ? `style="--hero-image:url('${esc(photo)}')"` : ""}>
       <div class="hero-inner">
         ${ev.date ? `<span class="chip">${esc(countdown(ev.date))}</span>` : ""}
         ${extra}
@@ -248,15 +248,110 @@ const COLORS = {
 };
 const HEX = /^#[0-9a-f]{6}$/i;
 
-// The saved value is a theme name, or custom colors as JSON {accent, bg, card}.
-function parseColor(value) {
-  if (!value) return null;
-  if (COLORS[value]) return COLORS[value];
+// ---------- card fonts and text colors ----------
+// Must match FONTS and CARDS in src/index.ts. `g` is the Google Fonts family spec, loaded only when used.
+const FONTS = {
+  bricolage: { name: "Bricolage (moderne)", css: '"Bricolage Grotesque", system-ui, sans-serif', g: "Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800" },
+  system: { name: "Classique", css: 'system-ui, -apple-system, "Segoe UI", sans-serif' },
+  playfair: { name: "Playfair (élégant)", css: '"Playfair Display", Georgia, serif', g: "Playfair+Display:wght@400;700" },
+  abril: { name: "Abril (magazine)", css: '"Abril Fatface", Georgia, serif', g: "Abril+Fatface" },
+  limelight: { name: "Limelight (art déco)", css: '"Limelight", Georgia, serif', g: "Limelight" },
+  bebas: { name: "Bebas (affiche)", css: '"Bebas Neue", Impact, sans-serif', g: "Bebas+Neue" },
+  poppins: { name: "Poppins (rond)", css: '"Poppins", system-ui, sans-serif', g: "Poppins:wght@400;600;800" },
+  spacemono: { name: "Space Mono (machine à écrire)", css: '"Space Mono", ui-monospace, monospace', g: "Space+Mono:wght@400;700" },
+  pacifico: { name: "Pacifico (rétro)", css: '"Pacifico", cursive', g: "Pacifico" },
+  lobster: { name: "Lobster (bistrot)", css: '"Lobster", cursive', g: "Lobster" },
+  dancing: { name: "Dancing Script (manuscrit)", css: '"Dancing Script", cursive', g: "Dancing+Script:wght@400;700" },
+  caveat: { name: "Caveat (feutre)", css: '"Caveat", cursive', g: "Caveat:wght@400;700" },
+};
+// The event page cards a host can style, with the name shown in the picker.
+const CARDS = [
+  ["hero", "En-tête (titre, date)"],
+  ["info", "Adresse et description"],
+  ["rsvp", "Vous venez ?"],
+  ["guests", "Invités"],
+  ["music", "Playlist"],
+  ["comments", "Commentaires"],
+];
+const CARD_PROPS = { titleFont: "font", title: "color", textFont: "font", text: "color" };
+
+// Keeps only known cards and valid values: {info: {titleFont, title, textFont, text}, …}.
+function cleanCards(cards) {
+  const out = {};
+  if (!cards || typeof cards !== "object") return out;
+  for (const [key] of CARDS) {
+    const style = cards[key];
+    if (!style || typeof style !== "object") continue;
+    const clean = {};
+    for (const [prop, kind] of Object.entries(CARD_PROPS)) {
+      const v = style[prop];
+      if (kind === "font" ? Object.hasOwn(FONTS, v) : HEX.test(v || "")) clean[prop] = kind === "font" ? v : v.toLowerCase();
+    }
+    if (Object.keys(clean).length) out[key] = clean;
+  }
+  return out;
+}
+
+// The saved value is a theme name, or JSON: {theme} or custom colors {accent, bg, card}, plus optional cards.
+// Returns {theme, custom, cards}: custom is null when a theme is used.
+function parseStyle(value) {
+  const out = { theme: "", custom: null, cards: {} };
+  if (!value) return out;
+  if (Object.hasOwn(COLORS, value)) return { ...out, theme: value };
   try {
-    const c = JSON.parse(value);
-    if (["accent", "bg", "card"].every((k) => HEX.test(c[k]))) return c;
+    const v = JSON.parse(value);
+    if (Object.hasOwn(COLORS, v.theme)) out.theme = v.theme;
+    else if (["accent", "bg", "card"].every((k) => HEX.test(v[k]))) out.custom = { accent: v.accent, bg: v.bg, card: v.card };
+    out.cards = cleanCards(v.cards);
   } catch {}
-  return null;
+  return out;
+}
+
+// Back to the stored form: a plain theme name when there is nothing else, like before cards existed.
+function serializeStyle(style) {
+  const cards = cleanCards(style.cards);
+  const extra = Object.keys(cards).length ? { cards } : {};
+  if (style.custom) return JSON.stringify({ ...style.custom, ...extra });
+  return extra.cards ? JSON.stringify({ theme: style.theme, ...extra }) : style.theme;
+}
+
+// The page colors {accent, bg, card} for a saved value, or null for the default (follows light/dark mode).
+function parseColor(value) {
+  const style = parseStyle(value);
+  return style.custom || (style.theme ? COLORS[style.theme] : null);
+}
+
+const loadedFonts = new Set();
+function loadFonts(keys) {
+  const todo = [...new Set(keys)].filter((k) => FONTS[k]?.g && !loadedFonts.has(k));
+  if (!todo.length) return;
+  for (const k of todo) loadedFonts.add(k);
+  const link = document.createElement("link");
+  link.rel = "stylesheet";
+  link.href = `https://fonts.googleapis.com/css2?${todo.map((k) => `family=${FONTS[k].g}`).join("&")}&display=swap`;
+  document.head.append(link);
+}
+
+// Per-card fonts and text colors, as a <style> tag. Values are whitelisted by cleanCards.
+function applyCardStyles(cards) {
+  let tag = document.getElementById("card-styles");
+  if (!tag) {
+    tag = document.createElement("style");
+    tag.id = "card-styles";
+    document.head.append(tag);
+  }
+  loadFonts(Object.values(cards).flatMap((c) => [c.titleFont, c.textFont]));
+  tag.textContent = Object.entries(cards)
+    .map(([key, c]) => {
+      const sel = `[data-card="${key}"]`;
+      const text = [
+        c.textFont && `font-family: ${FONTS[c.textFont].css}`,
+        c.text && `color: ${c.text}; --text: ${c.text}; --muted: color-mix(in srgb, ${c.text} 68%, transparent)`,
+      ].filter(Boolean);
+      const title = [c.titleFont && `font-family: ${FONTS[c.titleFont].css}`, c.title && `color: ${c.title}`].filter(Boolean);
+      return (text.length ? `${sel} { ${text.join("; ")}; }\n` : "") + (title.length ? `${sel} :is(h1, h2) { ${title.join("; ")}; }\n` : "");
+    })
+    .join("");
 }
 
 function isDark(hex) {
@@ -270,6 +365,7 @@ const COLOR_PROPS = ["--accent", "--accent-text", "--accent-soft", "--bg", "--ca
 function applyColor(value) {
   const style = document.body.style;
   for (const prop of COLOR_PROPS) style.removeProperty(prop);
+  applyCardStyles(parseStyle(value).cards);
   const c = parseColor(value);
   if (!c) return;
   const text = isDark(c.card) ? "#f3efff" : "#1b1033";
@@ -284,11 +380,6 @@ function applyColor(value) {
   style.setProperty("--fill", `color-mix(in srgb, ${text} 5%, ${c.card})`);
   style.setProperty("--page-text", isDark(c.bg) ? "#f3efff" : "#1b1033");
   style.setProperty("color-scheme", isDark(c.card) ? "dark" : "light");
-}
-
-// Colors shown in the custom pickers: the saved ones, or the current theme's.
-function currentColors(value) {
-  return parseColor(value) || COLORS[""];
 }
 
 // ---------- background picture ----------
@@ -337,6 +428,106 @@ async function uploadBackground(eventId, token, blob) {
   return data;
 }
 
+// ---------- per-card style (host) ----------
+// Each card gets a small "Aa" button that opens a sheet with just that card's fonts and colors.
+
+let closeCardStyle = () => {};
+let openCardStyle = () => {};
+document.addEventListener("click", (ev) => {
+  const btn = ev.target.closest("[data-card-edit]");
+  if (btn) openCardStyle(btn.dataset.cardEdit);
+});
+
+// Adds the "Aa" buttons (hosts only). Called again after live blocks are swapped.
+function addCardButtons() {
+  if (!space.data?.me?.isHost) return;
+  for (const el of app.querySelectorAll("[data-card]")) {
+    if (el.querySelector(":scope > .card-edit")) continue;
+    const name = CARDS.find(([k]) => k === el.dataset.card)?.[1] || "";
+    el.insertAdjacentHTML(
+      "beforeend",
+      `<button type="button" class="card-edit" data-card-edit="${el.dataset.card}" aria-label="Police et couleurs : ${esc(name)}" title="Police et couleurs">Aa</button>`,
+    );
+  }
+}
+
+function setupCardStyle(eventId, token) {
+  const panel = document.getElementById("card-style");
+  const controls = [...panel.querySelectorAll("[data-prop]")];
+  let key = null;
+  let cards = {};
+  const saved = () => space.data.event.color;
+  const withCards = () => serializeStyle({ ...parseStyle(saved()), cards });
+  const cardEl = () => app.querySelector(`[data-card="${key}"]`);
+
+  // Puts the card's values in the controls. Unset colors show what the card uses now.
+  function fill() {
+    const el = cardEl();
+    const shown = (sel) => {
+      const target = (sel && el?.querySelector(sel)) || el || document.body;
+      const [r, g, b] = getComputedStyle(target).color.match(/\d+/g).map(Number);
+      return "#" + [r, g, b].map((n) => n.toString(16).padStart(2, "0")).join("");
+    };
+    const current = cards[key] || {};
+    for (const control of controls) {
+      const prop = control.dataset.prop;
+      if (CARD_PROPS[prop] === "font") control.value = current[prop] || "";
+      else control.value = current[prop] || shown(prop === "title" ? "h1, h2" : "");
+      panel.querySelector(`[data-auto="${prop}"]`)?.toggleAttribute("hidden", !current[prop]);
+    }
+  }
+  const setProp = (prop, value) => {
+    const next = { ...cards[key], [prop]: value };
+    if (!value) delete next[prop];
+    cards = { ...cards, [key]: next };
+    applyColor(withCards());
+    fill();
+  };
+
+  closeCardStyle = () => {
+    panel.hidden = true;
+    cardEl()?.classList.remove("card-editing");
+    key = null;
+    applyColor(saved()); // drop the unsaved preview
+  };
+  openCardStyle = (k) => {
+    const picker = document.getElementById("color-picker");
+    if (picker && !picker.hidden) document.getElementById("color-open").click(); // one menu at a time
+    if (key) closeCardStyle();
+    key = k;
+    cards = parseStyle(saved()).cards;
+    loadFonts(Object.keys(FONTS)); // so each choice shows right away
+    panel.querySelector("#card-style-title").textContent = `Aa · ${CARDS.find(([c]) => c === k)?.[1] || ""}`;
+    panel.hidden = false;
+    const el = cardEl();
+    el?.classList.add("card-editing");
+    if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 70, behavior: "smooth" });
+    fill();
+  };
+
+  for (const control of controls) {
+    control.addEventListener(control.tagName === "SELECT" ? "change" : "input", () => setProp(control.dataset.prop, control.value.toLowerCase()));
+  }
+  for (const btn of panel.querySelectorAll("[data-auto]")) btn.addEventListener("click", () => setProp(btn.dataset.auto, ""));
+  panel.querySelector("#card-reset").addEventListener("click", () => {
+    const { [key]: _, ...rest } = cards;
+    cards = rest;
+    applyColor(withCards());
+    fill();
+  });
+  panel.querySelector("#card-style-close").addEventListener("click", closeCardStyle);
+  const saveBtn = panel.querySelector("#card-style-save");
+  saveBtn.addEventListener("click", () =>
+    withBusy(saveBtn, async () => {
+      const data = await api(`/parties/${eventId}/color`, { method: "PUT", body: { color: withCards() }, token });
+      key = null;
+      renderSpace(eventId, data);
+      toast("Style enregistré");
+    }),
+  );
+  addCardButtons();
+}
+
 // Organizer-only floating buttons on the event page: pick a photo / remove it.
 function setupBackgroundControl(eventId, token) {
   const picker = document.getElementById("color-picker");
@@ -345,22 +536,38 @@ function setupBackgroundControl(eventId, token) {
     picker.hidden = !picker.hidden;
     open.setAttribute("aria-expanded", String(!picker.hidden));
   });
-  const save = (btn, color) =>
+  // What the host is editing: starts from the saved value, previewed live, saved as a whole.
+  let style = parseStyle(space.data.event.color);
+  const preview = () => applyColor(serializeStyle(style));
+  open.addEventListener("click", () => {
+    if (picker.hidden) {
+      style = parseStyle(space.data.event.color); // closed without saving: drop the preview
+      applyColor(space.data.event.color);
+    } else {
+      document.getElementById("card-style").hidden || closeCardStyle();
+    }
+  });
+  const save = (btn) =>
     withBusy(btn, async () => {
-      renderSpace(eventId, await api(`/parties/${eventId}/color`, { method: "PUT", body: { color }, token }));
+      renderSpace(eventId, await api(`/parties/${eventId}/color`, { method: "PUT", body: { color: serializeStyle(style) }, token }));
       toast("Couleurs mises à jour");
     });
   picker.addEventListener("click", (ev) => {
     const swatch = ev.target.closest("[data-color]");
     if (!swatch) return;
-    applyColor(swatch.dataset.color); // instant preview
-    save(swatch, swatch.dataset.color);
+    style = { ...style, theme: swatch.dataset.color, custom: null };
+    preview();
+    save(swatch);
   });
   const inputs = [...picker.querySelectorAll("input[data-key]")];
-  const custom = () => JSON.stringify(Object.fromEntries(inputs.map((i) => [i.dataset.key, i.value.toLowerCase()])));
-  for (const input of inputs) input.addEventListener("input", () => applyColor(custom()));
-  const saveCustom = document.getElementById("color-save");
-  saveCustom.addEventListener("click", () => save(saveCustom, custom()));
+  for (const input of inputs) {
+    input.addEventListener("input", () => {
+      style = { ...style, custom: Object.fromEntries(inputs.map((i) => [i.dataset.key, i.value.toLowerCase()])) };
+      preview();
+    });
+  }
+  const saveAll = document.getElementById("color-save");
+  saveAll.addEventListener("click", () => save(saveAll));
 
   const fileInput = document.getElementById("bg-file");
   const change = document.getElementById("bg-change");
@@ -598,6 +805,7 @@ function spaceHtml(eventId, data, identity) {
            )
            .join("")}</ul></div>`
       : "";
+  const style = parseStyle(event.color);
 
   return `
     <nav class="topbar"><a href="/mes-evenements">← Mes événements</a><span class="topbar-right"><span class="hello">${avatar(me.name, "sm")} Salut ${esc(me.name)} 👋</span><button class="bell" id="bell" aria-expanded="false" aria-label="Notifications">🔔<span class="bell-count" id="bell-count" hidden></span></button></span></nav>
@@ -630,7 +838,7 @@ function spaceHtml(eventId, data, identity) {
 
     ${
       event.address || event.description || me.isHost
-        ? `<section data-live="info" class="card event-info">
+        ? `<section data-live="info" data-card="info" class="card event-info">
             ${event.address ? `<p class="address">📍 <a href="${mapsUrl(event.address)}" target="_blank" rel="noopener">${esc(event.address)}</a></p>` : ""}
             ${event.description ? `<p class="description">${esc(event.description)}</p>` : ""}
             ${me.isHost ? `<button class="link" id="edit">✏️ Modifier les détails</button>` : ""}
@@ -638,7 +846,7 @@ function spaceHtml(eventId, data, identity) {
         : ""
     }
 
-    <section data-live="rsvp" class="card">
+    <section data-live="rsvp" data-card="rsvp" class="card">
       <h2>Vous venez ?</h2>
       <div class="rsvp">
         ${Object.entries(RSVP_LABELS)
@@ -650,7 +858,7 @@ function spaceHtml(eventId, data, identity) {
       </div>
     </section>
 
-    <section data-live="guests" class="card">
+    <section data-live="guests" data-card="guests" class="card">
       <h2>Invités <span class="count">${guests.length}</span></h2>
       ${guestList("going", "Viennent")}
       ${guestList("maybe", "Peut-être")}
@@ -661,7 +869,7 @@ function spaceHtml(eventId, data, identity) {
 
     ${live("music", musicSection(event, me, data.spotify))}
 
-    <section class="card">
+    <section data-card="comments" class="card">
       <h2>💬 Commentaires</h2>
       <ul class="comments" id="comments"></ul>
       <form id="comment-form" class="comment-form" autocomplete="off">
@@ -699,7 +907,7 @@ function spaceHtml(eventId, data, identity) {
               ${Object.entries(COLORS)
                 .map(
                   ([key, c]) =>
-                    `<button class="swatch ${key === (event.color || "") ? "selected" : ""}" data-color="${key}" style="--swatch:${c.accent};--swatch-bg:${c.bg}" aria-label="${esc(c.name)}" title="${esc(c.name)}"></button>`,
+                    `<button class="swatch ${!style.custom && key === style.theme ? "selected" : ""}" data-color="${key}" style="--swatch:${c.accent};--swatch-bg:${c.bg}" aria-label="${esc(c.name)}" title="${esc(c.name)}"></button>`,
                 )
                 .join("")}
             </div>
@@ -712,11 +920,36 @@ function spaceHtml(eventId, data, identity) {
               ]
                 .map(
                   ([key, label]) =>
-                    `<label><input type="color" data-key="${key}" value="${currentColors(event.color)[key]}"> ${label}</label>`,
+                    `<label><input type="color" data-key="${key}" value="${(style.custom || COLORS[style.theme])[key]}"> ${label}</label>`,
                 )
                 .join("")}
             </div>
-            <button class="primary" id="color-save">Enregistrer mes couleurs</button>
+            <button class="primary" id="color-save">Enregistrer</button>
+          </div>
+          <div class="card-style-panel" id="card-style" hidden>
+            <div class="card-style-head">
+              <strong id="card-style-title"></strong>
+              <button type="button" class="link small" id="card-style-close">Fermer</button>
+            </div>
+            ${[
+              ["title", "Titre"],
+              ["text", "Texte"],
+            ]
+              .map(
+                ([prop, label]) => `<div class="card-style-row">
+                  <span class="card-style-label">${label}</span>
+                  <select data-prop="${prop}Font" aria-label="Police : ${label.toLowerCase()}"><option value="">Police par défaut</option>${Object.entries(FONTS)
+                    .map(([key, f]) => `<option value="${key}" style="font-family:${esc(f.css)}">${esc(f.name)}</option>`)
+                    .join("")}</select>
+                  <input type="color" data-prop="${prop}" aria-label="Couleur : ${label.toLowerCase()}">
+                  <button type="button" class="link small" data-auto="${prop}" title="Couleur par défaut">Auto</button>
+                </div>`,
+              )
+              .join("")}
+            <div class="card-style-actions">
+              <button type="button" class="link small" id="card-reset">Réinitialiser cette carte</button>
+              <button class="primary" id="card-style-save">Enregistrer</button>
+            </div>
           </div>
           <div class="bg-control">
             <button class="bg-fab" id="color-open" aria-expanded="false">🎨 Couleurs</button>
@@ -764,7 +997,10 @@ function bindLive(key) {
 function bindFrame() {
   const { eventId, data, token } = space;
   const { event, me } = data;
-  if (me.isHost) setupBackgroundControl(eventId, token);
+  if (me.isHost) {
+    setupBackgroundControl(eventId, token);
+    setupCardStyle(eventId, token);
+  }
 
   document.getElementById("rename").addEventListener("click", async () => {
     const name = prompt("Votre prénom", me.name)?.trim();
@@ -870,7 +1106,7 @@ function musicSection(event, me, spotify = {}) {
 
   if (!event.playlist_url && !spotify.connected) {
     if (!host) return "";
-    return `<section class="card stack"><h2>🎵 Playlist</h2>
+    return `<section data-card="music" class="card stack"><h2>🎵 Playlist</h2>
         ${
           spotify.enabled
             ? hostControls + `<p class="muted small center">ou <button class="link small" id="add-playlist">collez le lien d'une playlist</button></p>`
@@ -881,7 +1117,7 @@ function musicSection(event, me, spotify = {}) {
 
   const embed = spotifyEmbed(event.playlist_url);
   const songs = spotify.songs || [];
-  return `<section class="card music">
+  return `<section data-card="music" class="card music">
       <h2>🎵 Playlist</h2>
       ${event.playlist_note ? `<p class="playlist-note">${esc(event.playlist_note)}</p>` : ""}
       ${
@@ -1083,6 +1319,11 @@ function inUse(el) {
   return !!(search && search.value.trim());
 }
 
+// The host has the color picker or a card's style sheet open, with an unsaved preview.
+function previewing() {
+  return ["color-picker", "card-style"].some((id) => document.getElementById(id)?.hidden === false);
+}
+
 function patchSpace(data) {
   const { eventId } = space;
   const identity = getIdentity(eventId);
@@ -1094,7 +1335,7 @@ function patchSpace(data) {
     // Same page layout: swap only the blocks that changed.
     space.data = data;
     setBackground(eventId, data.event.background_version);
-    applyColor(data.event.color);
+    if (!previewing()) applyColor(data.event.color);
     for (const [key, part] of next) {
       if (!key || part.html === prev.get(key).html) continue;
       const old = app.querySelector(`[data-live="${key}"]`);
@@ -1115,12 +1356,13 @@ function patchSpace(data) {
       old.replaceWith(fresh);
       bindLive(key);
     }
+    addCardButtons();
     space.parts = next;
     return;
   }
   // The layout itself changed (made co-host, new address, new colors…): redraw the page,
   // unless a menu or the color picker is open, then wait for the next tick.
-  if (document.querySelector("dialog[open]") || document.getElementById("color-picker")?.hidden === false) return;
+  if (document.querySelector("dialog[open]") || previewing()) return;
   const y = window.scrollY;
   renderSpace(eventId, data);
   window.scrollTo(0, y);
