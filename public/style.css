@@ -435,13 +435,22 @@ body.has-bg .card {
 .guest-chip:focus-visible { outline: 2px solid var(--accent); }
 .emoji-panel[hidden], .gif-panel[hidden], .mention-list[hidden] { display: none; }
 
-/* Likes */
-.comment-foot { display: flex; align-items: center; gap: 8px; margin-top: 4px; min-width: 0; }
-.like { border: none; background: none; padding: 2px 6px; margin-left: -6px; border-radius: 999px; font-size: 0.95rem; line-height: 1.2; color: var(--muted); }
-.like span { font-size: 0.85rem; font-weight: 600; }
-.like.on { color: var(--accent); }
-.like:hover { background: var(--accent-soft); }
-.likers { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* Reactions */
+.comment-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.reaction { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 0.9rem; line-height: 1.4; background: var(--card); border: 1px solid var(--border); color: inherit; }
+.reaction span { font-size: 0.8rem; font-weight: 600; color: var(--muted); }
+.reaction.on { border-color: var(--accent); background: var(--accent-soft); }
+.reaction.on span { color: var(--accent); }
+.reaction.add { color: var(--muted); font-size: 0.85rem; }
+.likers { margin: 4px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.react-bar { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 6px; padding: 4px; border-radius: 16px; background: var(--card); border: 1px solid var(--border); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12); width: fit-content; max-width: 100%; }
+.react-bar[hidden], .react-more[hidden], .react-bar .more[hidden] { display: none; }
+.react-bar button { border: none; background: none; padding: 4px; font-size: 1.35rem; line-height: 1; border-radius: 999px; width: 36px; height: 36px; }
+.react-bar button.on { background: var(--accent-soft); }
+.react-bar button:hover { background: var(--accent-soft); }
+.react-bar .more { font-size: 1rem; color: var(--muted); }
+.react-more { display: flex; flex-wrap: wrap; gap: 2px; width: 100%; }
+.comments li { -webkit-touch-callout: none; }
 .comments li.flash { animation: flash 1.6s ease-out; }
 @keyframes flash { 0%, 30% { box-shadow: 0 0 0 3px var(--accent); } 100% { box-shadow: 0 0 0 0 transparent; } }
 

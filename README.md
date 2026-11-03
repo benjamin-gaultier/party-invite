@@ -64,8 +64,8 @@ send GIFs. A tagged guest sees that comment highlighted. Everything lives in the
 `comments.body` text: a GIF is stored as a `[gif:ID]` line and shown from media.giphy.com.
 No database change.
 
-Guests can ❤️ a comment (table `comment_likes`, migration 0006). The 🔔 on the event page
-lists who liked your comments or tagged you, with a red count for anything newer than the
+Guests react to a comment with an emoji, WhatsApp-style: one reaction per guest, a new one replaces it, tapping yours again removes it (tap ＋ or long-press the comment). Stored in `comment_likes` (migrations 0006 and 0007, `emoji` column, default ❤️). The 🔔 on the event page
+lists who reacted to your comments or tagged you, with a red count for anything newer than the
 last time you opened it (kept in the browser next to the guest token). It is built from the
 comments the page already polls every 8 seconds, so there is no separate notifications table,
 and a toast pops up when something new arrives while the page is open. No phone push yet.
