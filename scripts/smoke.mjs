@@ -142,6 +142,38 @@ const otherEvent = await call("/parties", { method: "POST", body: { title: "Othe
 const cross = await call(`/parties/${otherEvent.data.eventId}`, { token: guest.token });
 check("token does not work on another event", !!cross.data.preview);
 
+// Duplicate guests: merge and remove
+{
+  const dup = (await call(`/parties/${eventId}/join`, { method: "POST", body: { name: "Guest" } })).data.guest;
+  await call(`/parties/${eventId}/rsvp`, { method: "PUT", body: { status: "maybe" }, token: dup.token });
+  const dupPost = await call(`/parties/${eventId}/comments`, { method: "POST", body: { body: "Je suis en double" }, token: dup.token });
+  const dupComment = dupPost.data.comments.at(-1).id;
+  const firstComment = dupPost.data.comments[0].id;
+  await call(`/parties/${eventId}/comments/${dupComment}/like`, { method: "PUT", body: { emoji: "😂" }, token: dup.token });
+  await call(`/parties/${eventId}/comments/${firstComment}/like`, { method: "PUT", body: { emoji: "🔥" }, token: dup.token });
+  await call(`/parties/${eventId}/comments/${firstComment}/like`, { method: "PUT", body: { emoji: "❤️" }, token: guest.token });
+  check("guest cannot remove a guest", (await call(`/parties/${eventId}/guests/${dup.id}`, { method: "DELETE", token: guest.token })).status === 403);
+  check("host cannot remove self", (await call(`/parties/${eventId}/guests/${host.id}`, { method: "DELETE", token: host.token })).status === 400);
+  check("merge into unknown guest -> 404", (await call(`/parties/${eventId}/guests/${dup.id}?into=nope`, { method: "DELETE", token: host.token })).status === 404);
+  const merged = await call(`/parties/${eventId}/guests/${dup.id}?into=${guest.id}`, { method: "DELETE", token: host.token });
+  check("host merges a duplicate", merged.status === 200 && !merged.data.guests.some((g) => g.id === dup.id));
+  check("merge keeps the original's RSVP", merged.data.guests.find((g) => g.id === guest.id)?.rsvp === "going");
+  const moved = merged.data.comments.find((c) => c.id === dupComment);
+  check("merged comment now belongs to the original", moved?.guestId === guest.id && moved.likes[0]?.guestId === guest.id);
+  const first = merged.data.comments.find((c) => c.id === firstComment);
+  check("original's reaction wins on a clash", first.likes.filter((l) => l.guestId === guest.id).map((l) => l.emoji).join() === "❤️");
+  const asDup = await call(`/parties/${eventId}`, { token: dup.token });
+  check("duplicate's link opens the original", asDup.data.me?.id === guest.id);
+  check("duplicate's token lists the event in my events", (await call("/mine", { method: "POST", body: { tokens: [dup.token] } })).data.events?.[0]?.id === eventId);
+
+  const extra = (await call(`/parties/${eventId}/join`, { method: "POST", body: { name: "Extra" } })).data.guest;
+  await call(`/parties/${eventId}/comments`, { method: "POST", body: { body: "bye" }, token: extra.token });
+  const gone = await call(`/parties/${eventId}/guests/${extra.id}`, { method: "DELETE", token: host.token });
+  check("host removes a guest", gone.status === 200 && !gone.data.guests.some((g) => g.id === extra.id) && !gone.data.comments.some((c) => c.body === "bye"));
+  check("removed guest's link asks to join again", !!(await call(`/parties/${eventId}`, { token: extra.token })).data.preview);
+  check("removing twice -> 404", (await call(`/parties/${eventId}/guests/${extra.id}`, { method: "DELETE", token: host.token })).status === 404);
+}
+
 // My events + deletion
 const mine = await call("/mine", { method: "POST", body: { tokens: [host.token, otherEvent.data.guest.token, "bogus"] } });
 check("my events lists hosted events", mine.data.events?.length === 2 && mine.data.events.every((e) => e.isHost));

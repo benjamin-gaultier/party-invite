@@ -11,6 +11,7 @@ can't go), map link for the address, host can edit details, "Your events" list o
 home page (stored in the browser), theme / dress code, Spotify playlist link with an
 embedded player and a message for guests, comment wall (refreshes every 8 seconds),
 guests add songs to the host's Spotify playlist from the app (no Spotify account needed),
+host can remove a guest or merge a duplicate guest into the original (comments, reactions, songs and RSVP move over; the duplicate's link keeps opening the original via `guest_aliases`),
 app in French, host-chosen colors and background picture via floating organizer-only buttons (resized in the browser, stored in D1).
 
 **Next:** shared checklist/notes, link previews and polish,
