@@ -377,19 +377,26 @@ function applyCardStyles(cards) {
 
 // Half-width cards sit side by side in pairs, in display order. A half card with no half
 // neighbour to pair with (say the next card is hidden for guests) spans the full width instead.
-function pairHalves(cards) {
-  const shown = cardOrder(cards)
-    .map((k) => app.querySelector(`:scope > [data-card="${k}"]`))
-    .filter(Boolean);
+// The card being edited in the "Aa" sheet keeps its half width even alone, so the host sees the change.
+let editingCard = null;
+function soloHalves(cards) {
+  const shown = cardOrder(cards).filter((k) => app.querySelector(`:scope > [data-card="${k}"]`));
+  const solo = new Set();
   let open = null;
-  for (const el of shown) {
-    el.classList.remove("solo");
-    if (cards[el.dataset.card]?.size !== "half") {
-      open?.classList.add("solo");
+  for (const k of shown) {
+    if (cards[k]?.size !== "half") {
+      if (open) solo.add(open);
       open = null;
-    } else open = open ? null : el;
+    } else open = open ? null : k;
   }
-  open?.classList.add("solo");
+  if (open) solo.add(open);
+  return solo;
+}
+function pairHalves(cards) {
+  const solo = soloHalves(cards);
+  for (const el of app.querySelectorAll(":scope > [data-card]")) {
+    el.classList.toggle("solo", solo.has(el.dataset.card) && el.dataset.card !== editingCard);
+  }
 }
 
 function isDark(hex) {
@@ -521,6 +528,7 @@ function setupCardStyle(eventId, token) {
     const at = shownOrder.indexOf(key);
     layoutRow.querySelector('[data-move="-1"]').disabled = at <= 0;
     layoutRow.querySelector('[data-move="1"]').disabled = at < 0 || at >= shownOrder.length - 1;
+    panel.querySelector("#half-hint").hidden = !(current.size === "half" && soloHalves(cards).has(key));
   }
   const setProp = (prop, value) => {
     const next = { ...cards[key], [prop]: value };
@@ -534,6 +542,7 @@ function setupCardStyle(eventId, token) {
     panel.hidden = true;
     cardEl()?.classList.remove("card-editing");
     key = null;
+    editingCard = null;
     applyColor(saved()); // drop the unsaved preview
   };
   openCardStyle = (k) => {
@@ -541,6 +550,7 @@ function setupCardStyle(eventId, token) {
     if (picker && !picker.hidden) document.getElementById("color-open").click(); // one menu at a time
     if (key) closeCardStyle();
     key = k;
+    editingCard = k;
     cards = parseStyle(saved()).cards;
     loadFonts(Object.keys(FONTS)); // so each choice shows right away
     panel.querySelector("#card-style-title").textContent = `Aa · ${CARDS.find(([c]) => c === k)?.[1] || ""}`;
@@ -583,6 +593,7 @@ function setupCardStyle(eventId, token) {
     withBusy(saveBtn, async () => {
       const data = await api(`/parties/${eventId}/color`, { method: "PUT", body: { color: withCards() }, token });
       key = null;
+      editingCard = null;
       renderSpace(eventId, data);
       toast("Style enregistré");
     }),
@@ -1023,6 +1034,7 @@ function spaceHtml(eventId, data, identity) {
               <button type="button" class="move" data-move="-1" aria-label="Monter la carte" title="Monter">↑</button>
               <button type="button" class="move" data-move="1" aria-label="Descendre la carte" title="Descendre">↓</button>
             </div>
+            <p class="small half-hint" id="half-hint" hidden>Mettez aussi la carte juste au-dessus ou en dessous en « Moitié » pour les placer côte à côte. Seule, elle reprend toute la largeur pour les invités.</p>
             <div class="card-style-actions">
               <button type="button" class="link small" id="card-reset">Réinitialiser cette carte</button>
               <button class="primary" id="card-style-save">Enregistrer</button>

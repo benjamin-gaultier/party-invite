@@ -762,7 +762,7 @@ body.light-ui .bubble .author { color: hsl(var(--hue) 60% 38%); }
 @container (max-width: 260px) {
   .rsvp { grid-template-columns: 1fr; }
   .rsvp button { min-height: 48px; }
-  h2 { font-size: 1.1rem; }
+  h2 { font-size: 1.1rem; padding-right: 38px; }
   .guests li { font-size: 0.85rem; }
   .composer-bar { flex-wrap: wrap; }
   .photo-grid { grid-template-columns: repeat(2, 1fr); }
@@ -776,3 +776,5 @@ body.light-ui .bubble .author { color: hsl(var(--hue) 60% 38%); }
 .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
 .card-layout-row .move { min-height: 44px; padding: 0; border-radius: 50%; font-size: 1.1rem; }
 .card-layout-row .move:disabled { opacity: 0.35; cursor: default; }
+.half-hint { margin: 0; padding: 10px 12px; border-radius: 12px; background: var(--accent-soft); color: var(--text); }
+.half-hint[hidden] { display: none; }
