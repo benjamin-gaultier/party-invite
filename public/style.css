@@ -468,3 +468,15 @@ body.has-bg .card {
 .notifs .notif-text { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
 .notifs li.unread button { background: var(--accent-soft); }
 .notifs button:hover { background: var(--accent-soft); }
+
+/* Host menu for one guest (co-host, merge duplicate, remove) */
+.guest-menu { width: min(420px, calc(100vw - 32px)); padding: 20px; color: var(--text); border: 1px solid var(--border); }
+.guest-menu::backdrop { background: rgb(0 0 0 / 0.45); }
+.guest-menu h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
+.guest-menu h3 { margin: 18px 0 4px; font-size: 1rem; }
+.guest-menu p { margin: 0 0 8px; }
+.guest-menu > button:not(.link) { width: 100%; }
+.guest-menu > button.link { display: block; margin: 14px auto 0; }
+.merge-row { display: flex; gap: 8px; }
+.merge-row select { flex: 1; min-width: 0; font: inherit; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--fill, var(--bg)); color: var(--text); }
+button.link.remove-guest { color: #e5484d; margin-top: 18px; }

@@ -637,7 +637,7 @@ function renderSpace(eventId, data) {
       ${guestList("maybe", "Peut-être")}
       ${guestList("not_going", "Ne viennent pas")}
       ${guestList("none", "Pas encore répondu")}
-      ${me.isHost && guests.length > 1 ? `<p class="muted small">👑 Touchez un invité pour en faire un co-hôte : il pourra tout modifier comme vous.</p>` : ""}
+      ${me.isHost && guests.length > 1 ? `<p class="muted small">👑 Touchez un invité pour en faire un co-hôte, ou pour retirer un doublon.</p>` : ""}
     </section>
 
     ${musicSection(event, me, data.spotify)}
@@ -712,15 +712,7 @@ function renderSpace(eventId, data) {
   setupMusic(eventId, data, identity.token);
   if (me.isHost) setupBackgroundControl(eventId, identity.token);
   for (const btn of app.querySelectorAll("[data-host-toggle]")) {
-    btn.addEventListener("click", () => {
-      const makeHost = btn.dataset.isHost !== "1";
-      const name = btn.dataset.name;
-      if (!confirm(makeHost ? `Faire de ${name} un co-hôte ? Il pourra modifier l'événement, les couleurs et la playlist.` : `Retirer ${name} des hôtes ?`)) return;
-      withBusy(btn, async () => {
-        renderSpace(eventId, await api(`/parties/${eventId}/guests/${btn.dataset.hostToggle}/host`, { method: "PUT", body: { isHost: makeHost }, token: identity.token }));
-        toast(makeHost ? `${name} est co-hôte 👑` : `${name} n'est plus hôte`);
-      });
-    });
+    btn.addEventListener("click", () => guestMenu(eventId, guests, guests.find((g) => g.id === btn.dataset.hostToggle), identity.token));
   }
 
   for (const btn of app.querySelectorAll("[data-rsvp]")) {
@@ -762,6 +754,67 @@ function renderSpace(eventId, data) {
     }
     document.getElementById("edit").addEventListener("click", () => renderEdit(eventId, data));
   }
+}
+
+// Host menu for one guest: make/unmake co-host, merge a duplicate into someone, or remove.
+function guestMenu(eventId, guests, g, token) {
+  if (!g) return;
+  const others = guests.filter((o) => o.id !== g.id);
+  const dlg = document.createElement("dialog");
+  dlg.className = "card guest-menu";
+  dlg.innerHTML = `
+    <h2>${avatar(g.name, "sm")} ${esc(g.name)}</h2>
+    <button data-act="host">${g.isHost ? "Retirer des hôtes" : "👑 Faire co-hôte"}</button>
+    <h3>Doublon ?</h3>
+    <p class="muted small">Si ${esc(g.name)} est la même personne qu'un autre invité, fusionnez : ses commentaires, réactions, chansons et sa réponse passent sur l'autre, et son lien continue de marcher.</p>
+    <div class="merge-row">
+      <select id="merge-into" aria-label="Fusionner avec">
+        <option value="">Fusionner avec…</option>
+        ${others.map((o) => `<option value="${esc(o.id)}" ${o.name.trim().toLowerCase() === g.name.trim().toLowerCase() ? "selected" : ""}>${esc(o.name)}${o.isHost ? " (hôte)" : ""}</option>`).join("")}
+      </select>
+      <button class="primary" data-act="merge">Fusionner</button>
+    </div>
+    <button class="link remove-guest" data-act="remove">🗑️ Retirer ${esc(g.name)} de l'événement</button>
+    <button class="link" data-act="close">Annuler</button>`;
+  document.body.append(dlg);
+  dlg.addEventListener("close", () => dlg.remove());
+  dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
+  const run = (btn, fn) => withBusy(btn, async () => {
+    try {
+      const msg = await fn();
+      dlg.close();
+      if (msg) toast(msg);
+    } catch (err) {
+      toast(err.message);
+    }
+  });
+  const path = `/parties/${eventId}/guests/${encodeURIComponent(g.id)}`;
+  dlg.querySelector('[data-act="close"]').addEventListener("click", () => dlg.close());
+  dlg.querySelector('[data-act="host"]').addEventListener("click", (e) => {
+    const makeHost = !g.isHost;
+    if (!confirm(makeHost ? `Faire de ${g.name} un co-hôte ? Il pourra modifier l'événement, les couleurs et la playlist.` : `Retirer ${g.name} des hôtes ?`)) return;
+    run(e.currentTarget, async () => {
+      renderSpace(eventId, await api(`${path}/host`, { method: "PUT", body: { isHost: makeHost }, token }));
+      return makeHost ? `${g.name} est co-hôte 👑` : `${g.name} n'est plus hôte`;
+    });
+  });
+  dlg.querySelector('[data-act="merge"]').addEventListener("click", (e) => {
+    const into = others.find((o) => o.id === dlg.querySelector("#merge-into").value);
+    if (!into) return toast("Choisissez avec qui fusionner");
+    if (!confirm(`Fusionner ${g.name} dans ${into.name} ? ${g.name} disparaît de la liste.`)) return;
+    run(e.currentTarget, async () => {
+      renderSpace(eventId, await api(`${path}?into=${encodeURIComponent(into.id)}`, { method: "DELETE", token }));
+      return `${g.name} fusionné avec ${into.name} ✅`;
+    });
+  });
+  dlg.querySelector('[data-act="remove"]').addEventListener("click", (e) => {
+    if (!confirm(`Retirer ${g.name} ? Ses commentaires, réactions et chansons ajoutées seront supprimés. S'il rouvre le lien, il devra rejoindre à nouveau.`)) return;
+    run(e.currentTarget, async () => {
+      renderSpace(eventId, await api(path, { method: "DELETE", token }));
+      return `${g.name} a été retiré`;
+    });
+  });
+  dlg.showModal();
 }
 
 function musicSection(event, me, spotify = {}) {

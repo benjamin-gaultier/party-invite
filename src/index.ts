@@ -138,11 +138,29 @@ async function currentGuest(c: Context<App>, eventId: string): Promise<GuestRow 
   const auth = c.req.header("Authorization") ?? "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   if (!token) return null;
-  return c.env.DB.prepare(
+  const hash = await sha256(token);
+  const guest = await c.env.DB.prepare(
     "SELECT id, event_id, name, is_host, rsvp, created_at FROM guests WHERE token_hash = ? AND event_id = ?",
   )
-    .bind(await sha256(token), eventId)
+    .bind(hash, eventId)
     .first<GuestRow>();
+  if (guest) return guest;
+  // A token of a duplicate the host merged away now opens the guest it was merged into.
+  try {
+    return await c.env.DB.prepare(
+      `SELECT g.id, g.event_id, g.name, g.is_host, g.rsvp, g.created_at
+       FROM guest_aliases a JOIN guests g ON g.id = a.guest_id WHERE a.token_hash = ? AND g.event_id = ?`,
+    )
+      .bind(hash, eventId)
+      .first<GuestRow>();
+  } catch (err) {
+    if (String(err).includes("no such table")) return null; // before migration 0008
+    throw err;
+  }
+}
+
+async function hasAliases(db: D1Database): Promise<boolean> {
+  return !!(await db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'guest_aliases'").first());
 }
 
 async function requireGuest(c: Context<App>, eventId: string): Promise<GuestRow> {
@@ -304,6 +322,56 @@ app.put("/parties/:id/guests/:guestId/host", async (c) => {
   return c.json(await fullEvent(c.env, event, me));
 });
 
+// Hosts clean up the guest list, e.g. someone who joined twice from two phones.
+// DELETE …/guests/:guestId removes the guest with their comments, reactions and songs.
+// DELETE …/guests/:guestId?into=<otherId> merges them into another guest instead: their
+// comments, reactions, songs and RSVP move over, and their link keeps working as that
+// guest (guest_aliases), so they don't come back as a new duplicate.
+app.delete("/parties/:id/guests/:guestId", async (c) => {
+  const db = c.env.DB;
+  const event = await getEvent(db, c.req.param("id"));
+  const me = await requireGuest(c, event.id);
+  if (me.is_host !== 1) throw new HttpError(403, "Seul l'hôte peut retirer un invité");
+  const dupId = c.req.param("guestId");
+  if (dupId === me.id) throw new HttpError(400, "Vous ne pouvez pas vous retirer vous-même");
+  const dup = await db.prepare("SELECT id, is_host, rsvp FROM guests WHERE id = ? AND event_id = ?")
+    .bind(dupId, event.id)
+    .first<{ id: string; is_host: number; rsvp: Rsvp | null }>();
+  if (!dup) throw new HttpError(404, "Invité introuvable");
+
+  const intoId = c.req.query("into");
+  if (!intoId) {
+    await db.prepare("DELETE FROM guests WHERE id = ?").bind(dup.id).run(); // the rest cascades
+    return c.json(await fullEvent(c.env, event, me));
+  }
+  if (intoId === dup.id) throw new HttpError(400, "Choisissez un autre invité");
+  const keep = await db.prepare("SELECT id FROM guests WHERE id = ? AND event_id = ?").bind(intoId, event.id).first();
+  if (!keep) throw new HttpError(404, "Invité introuvable");
+
+  const stmts = [
+    db.prepare("UPDATE comments SET guest_id = ?1 WHERE guest_id = ?2").bind(intoId, dup.id),
+    // One reaction per guest per comment: keep the original's when both reacted.
+    db.prepare("DELETE FROM comment_likes WHERE guest_id = ?2 AND comment_id IN (SELECT comment_id FROM comment_likes WHERE guest_id = ?1)").bind(intoId, dup.id),
+    db.prepare("UPDATE comment_likes SET guest_id = ?1 WHERE guest_id = ?2").bind(intoId, dup.id),
+    db.prepare("UPDATE song_adds SET guest_id = ?1 WHERE guest_id = ?2").bind(intoId, dup.id),
+    db.prepare("UPDATE spotify_links SET guest_id = ?1 WHERE guest_id = ?2").bind(intoId, dup.id),
+    db.prepare("DELETE FROM spotify_states WHERE guest_id = ?").bind(dup.id),
+    // Keep the original's answer if they gave one; a host duplicate keeps host rights.
+    db.prepare("UPDATE guests SET rsvp = COALESCE(rsvp, ?2), is_host = MAX(is_host, ?3), updated_at = datetime('now') WHERE id = ?1")
+      .bind(intoId, dup.rsvp, dup.is_host),
+  ];
+  if (await hasAliases(db)) {
+    stmts.push(
+      db.prepare("UPDATE guest_aliases SET guest_id = ?1 WHERE guest_id = ?2").bind(intoId, dup.id),
+      db.prepare("INSERT OR REPLACE INTO guest_aliases (token_hash, guest_id) SELECT token_hash, ?1 FROM guests WHERE id = ?2").bind(intoId, dup.id),
+    );
+  }
+  stmts.push(db.prepare("DELETE FROM guests WHERE id = ?").bind(dup.id));
+  await db.batch(stmts); // all or nothing
+  const meNow = (await db.prepare("SELECT id, event_id, name, is_host, rsvp, created_at FROM guests WHERE id = ?").bind(me.id).first<GuestRow>())!;
+  return c.json(await fullEvent(c.env, event, meNow));
+});
+
 // Guest joins with just a name and gets a token back.
 app.post("/parties/:id/join", async (c) => {
   const event = await getEvent(c.env.DB, c.req.param("id"));
@@ -394,14 +462,17 @@ app.post("/mine", async (c) => {
   const clean = [...new Set(tokens.filter((t): t is string => typeof t === "string" && t.length > 0 && t.length <= 100))].slice(0, 90);
   if (!clean.length) return c.json({ events: [] });
   const hashes = await Promise.all(clean.map(sha256));
+  const marks = hashes.map(() => "?").join(", ");
+  // Tokens of merged duplicates (guest_aliases) count too, once migration 0008 is in.
+  const aliased = (await hasAliases(c.env.DB)) ? ` OR g.id IN (SELECT guest_id FROM guest_aliases WHERE token_hash IN (${marks}))` : "";
   const { results } = await c.env.DB.prepare(
     `SELECT e.id, e.title, e.date, e.time, g.is_host, g.rsvp,
        (SELECT COUNT(*) FROM guests WHERE event_id = e.id AND rsvp = 'going') AS going
      FROM guests g JOIN events e ON e.id = g.event_id
-     WHERE g.token_hash IN (${hashes.map(() => "?").join(", ")})
+     WHERE g.token_hash IN (${marks})${aliased}
      ORDER BY e.date, e.time`,
   )
-    .bind(...hashes)
+    .bind(...hashes, ...(aliased ? hashes : []))
     .all<{ id: string; title: string; date: string; time: string; is_host: number; rsvp: Rsvp | null; going: number }>();
   return c.json({
     events: results.map((r) => ({ id: r.id, title: r.title, date: r.date, time: r.time, isHost: r.is_host === 1, rsvp: r.rsvp, going: r.going })),
