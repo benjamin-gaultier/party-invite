@@ -647,6 +647,7 @@ function renderSpace(eventId, data) {
       <ul class="comments" id="comments"></ul>
       <form id="comment-form" class="comment-form" autocomplete="off">
         <ul class="mention-list" id="mention-list" role="listbox" hidden></ul>
+        <div class="reply-bar" id="reply-bar" hidden></div>
         <textarea name="body" rows="2" maxlength="1000" placeholder="Écrivez un mot… (@ pour taguer quelqu'un)"></textarea>
         <div class="composer-bar">
           <button type="button" class="tool" id="emoji-open" aria-expanded="false" aria-label="Ajouter un emoji" title="Emojis">😊</button>
@@ -1009,16 +1010,29 @@ function formatCommentText(text, names, myName) {
   return out + esc(text.slice(last));
 }
 
-// Splits a stored comment into its text and the GIFs it carries ("[gif:ID]" lines).
+const REPLY_LINE = /^\[reply:([A-Za-z0-9_-]{1,40})\]$/;
+
+// Splits a stored comment into its text, the GIFs it carries ("[gif:ID]" lines) and the
+// comment it answers (a first "[reply:ID]" line).
 function parseComment(body) {
   const gifs = [];
   const lines = [];
-  for (const line of body.split("\n")) {
+  let replyTo = null;
+  for (const [i, line] of body.split("\n").entries()) {
+    const r = i === 0 && line.trim().match(REPLY_LINE);
     const m = line.trim().match(GIF_LINE);
-    if (m) gifs.push(m[1]);
+    if (r) replyTo = r[1];
+    else if (m) gifs.push(m[1]);
     else lines.push(line);
   }
-  return { text: lines.join("\n").trim(), gifs };
+  return { text: lines.join("\n").trim(), gifs, replyTo };
+}
+
+// One-line preview of a comment for quotes.
+function quoteText(body) {
+  const { text, gifs } = parseComment(body);
+  const t = text.replace(/\s+/g, " ");
+  return (t.length > 80 ? t.slice(0, 77) + "…" : t) || (gifs.length ? "GIF" : "");
 }
 
 function mentionsMe(text, myName) {
@@ -1035,6 +1049,7 @@ function setupComments(eventId, me, initial, token, guests) {
   let lastKey = "";
   // Everyone we can tag: guests, plus authors of comments (in case someone joined since).
   const people = new Map(guests.map((g) => [g.id, g.name]));
+  let currentComments = initial;
 
   // ----- in-app notifications: who liked my comments or tagged me -----
   // Built from the comments we already poll. "Seen" is the newest server timestamp the
@@ -1055,12 +1070,18 @@ function setupComments(eventId, me, initial, token, guests) {
 
   function updateNotifications(comments) {
     const list = [];
+    const byId = new Map(comments.map((c) => [c.id, c]));
     for (const c of comments) {
+      const parsed = parseComment(c.body);
+      if (c.guestId !== me.id && parsed.replyTo && byId.get(parsed.replyTo)?.guestId === me.id) {
+        list.push({ kind: "reply", from: c.name, at: c.createdAt, id: c.id, text: snippet(c.body) });
+        continue;
+      }
       if (c.guestId === me.id) {
         for (const l of c.likes || []) {
           if (l.guestId !== me.id) list.push({ kind: "like", emoji: l.emoji || "❤️", from: l.name, at: l.at, id: c.id, text: snippet(c.body) });
         }
-      } else if (mentionsMe(parseComment(c.body).text, me.name)) {
+      } else if (mentionsMe(parsed.text, me.name)) {
         list.push({ kind: "mention", from: c.name, at: c.createdAt, id: c.id, text: snippet(c.body) });
       }
     }
@@ -1077,7 +1098,9 @@ function setupComments(eventId, me, initial, token, guests) {
     if (!panel.hidden) drawPanel(seen);
   }
 
-  const notifText = (n) => (n.kind === "like" ? `${n.emoji} ${n.from} a réagi à votre commentaire` : `💬 ${n.from} vous a tagué·e`);
+  const notifVerb = (n) =>
+    n.kind === "like" ? `a réagi ${n.emoji} à votre commentaire` : n.kind === "reply" ? "a répondu à votre commentaire" : "vous a tagué·e";
+  const notifText = (n) => `${n.kind === "like" ? n.emoji : n.kind === "reply" ? "↩️" : "💬"} ${n.from} ${notifVerb(n)}`;
 
   function drawPanel(seen) {
     panel.innerHTML = `<h2>Notifications</h2>${
@@ -1086,7 +1109,7 @@ function setupComments(eventId, me, initial, token, guests) {
             .map(
               (n) => `<li class="${n.at > seen ? "unread" : ""}"><button data-goto="${esc(n.id)}">
                 ${avatar(n.from, "sm")}
-                <span class="notif-text"><span><strong>${esc(n.from)}</strong> ${n.kind === "like" ? `a réagi ${esc(n.emoji)} à votre commentaire` : "vous a tagué·e"}${n.text ? ` : « ${esc(n.text)} »` : ""}</span>
+                <span class="notif-text"><span><strong>${esc(n.from)}</strong> ${esc(notifVerb(n))}${n.text ? ` : « ${esc(n.text)} »` : ""}</span>
                 <span class="muted small">${esc(formatAgo(n.at))}</span></span>
               </button></li>`,
             )
@@ -1119,6 +1142,7 @@ function setupComments(eventId, me, initial, token, guests) {
   });
 
   const draw = (comments) => {
+    currentComments = comments;
     for (const c of comments) people.set(c.guestId, c.name);
     updateNotifications(comments);
     const key = comments.map((c) => c.id + c.name + (c.likes || []).map((l) => l.guestId + l.emoji).join("+")).join();
@@ -1130,10 +1154,17 @@ function setupComments(eventId, me, initial, token, guests) {
     const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
     lastKey = key;
     const names = [...people.values()];
+    const byId = new Map(comments.map((c) => [c.id, c]));
     list.innerHTML = comments.length
       ? comments
           .map((c) => {
-            const { text, gifs } = parseComment(c.body);
+            const { text, gifs, replyTo } = parseComment(c.body);
+            const parent = replyTo ? byId.get(replyTo) : null;
+            const quote = replyTo
+              ? parent
+                ? `<button class="quote" data-goto-comment="${esc(parent.id)}"><strong>${esc(parent.name)}</strong><span>${esc(quoteText(parent.body))}</span></button>`
+                : `<div class="quote gone"><span>Message supprimé</span></div>`
+              : "";
             const mine = c.guestId === me.id;
             const tagged = !mine && mentionsMe(text, me.name);
             const likes = c.likes || [];
@@ -1147,10 +1178,11 @@ function setupComments(eventId, me, initial, token, guests) {
                 <div class="comment-meta"><strong>${esc(c.name)}</strong>
                   <span class="muted small" data-at="${esc(c.createdAt)}">${esc(formatAgo(c.createdAt))}</span>
                   <span class="comment-actions">
-                    ${mine ? "" : `<button class="link small" data-reply="${esc(c.name)}">Répondre</button>`}
+                    ${mine ? "" : `<button class="link small" data-reply="${esc(c.id)}" data-reply-name="${esc(c.name)}">Répondre</button>`}
                     ${mine || me.isHost ? `<button class="link small delete" data-delete="${esc(c.id)}" aria-label="Supprimer le commentaire">Supprimer</button>` : ""}
                   </span>
                 </div>
+                ${quote}
                 ${text ? `<p>${formatCommentText(text, names, me.name)}</p>` : ""}
                 ${gifs.map((id) => `<img class="comment-gif" src="${gifUrl(id)}" alt="GIF" loading="lazy">`).join("")}
                 <div class="comment-foot">
@@ -1212,11 +1244,25 @@ function setupComments(eventId, me, initial, token, guests) {
     updateMentions();
   };
 
-  const reply = (name) => {
-    const tag = `@${name} `;
-    if (!textarea.value.includes(tag.trim())) {
-      textarea.value = tag + textarea.value.replace(/^\s+/, "");
-    }
+  // Replying quotes the comment above the text box; the reply is sent with a
+  // "[reply:ID]" first line so everyone sees what it answers.
+  const replyBar = document.getElementById("reply-bar");
+  let replyTo = null;
+  const setReply = (comment) => {
+    replyTo = comment ? comment.id : null;
+    replyBar.hidden = !comment;
+    replyBar.innerHTML = comment
+      ? `<span class="reply-label"><span>↩️ Réponse à <strong>${esc(comment.name)}</strong></span><span class="muted">${esc(quoteText(comment.body))}</span></span>
+         <button type="button" class="link small" id="reply-cancel" aria-label="Annuler la réponse">✕</button>`
+      : "";
+  };
+  replyBar.addEventListener("click", (ev) => {
+    if (ev.target.closest("#reply-cancel")) setReply(null);
+  });
+
+  const reply = (commentId) => {
+    const comment = currentComments.find((c) => c.id === commentId);
+    if (comment) setReply(comment);
     textarea.focus();
     textarea.setSelectionRange(textarea.value.length, textarea.value.length);
     form.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -1225,6 +1271,17 @@ function setupComments(eventId, me, initial, token, guests) {
   list.addEventListener("click", async (ev) => {
     const replyBtn = ev.target.closest("[data-reply]");
     if (replyBtn) return reply(replyBtn.dataset.reply);
+    const quoteBtn = ev.target.closest("[data-goto-comment]");
+    if (quoteBtn) {
+      const target = document.getElementById(`c-${quoteBtn.dataset.gotoComment}`);
+      if (target) {
+        target.scrollIntoView({ block: "center", behavior: "smooth" });
+        target.classList.remove("flash");
+        void target.offsetWidth;
+        target.classList.add("flash");
+      }
+      return;
+    }
     const openBtn = ev.target.closest("[data-react-open]");
     if (openBtn) return toggleBar(openBtn.dataset.reactOpen);
     const moreBtn = ev.target.closest("[data-react-more]");
@@ -1385,8 +1442,10 @@ function setupComments(eventId, me, initial, token, guests) {
   });
 
   const send = async (body) => {
+    if (replyTo) body = `[reply:${replyTo}]\n${body}`;
     const { comments } = await api(`/parties/${eventId}/comments`, { method: "POST", body: { body }, token });
     textarea.value = "";
+    setReply(null);
     toggle(emojiBtn, emojiPanel, false);
     if (gifPanel) toggle(gifBtn, gifPanel, false);
     lastKey = "";
