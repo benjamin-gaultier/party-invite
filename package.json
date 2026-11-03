@@ -10,6 +10,7 @@
     "typecheck": "tsc",
     "smoke": "node scripts/smoke.mjs",
     "smoke:spotify": "node scripts/smoke-spotify.mjs",
+    "smoke:photos": "node scripts/smoke-photos.mjs",
     "fake-spotify": "node scripts/fake-spotify.mjs"
   },
   "dependencies": {

@@ -13,6 +13,8 @@ type Env = {
   GIPHY_API_KEY?: string;
   // Overridable for local tests against a fake GIPHY.
   GIPHY_API_URL?: string;
+  // R2 bucket for the photo album. Without it (or before migration 0009) the album is off.
+  PHOTOS?: R2Bucket;
 };
 type App = { Bindings: Env };
 
@@ -159,9 +161,11 @@ async function currentGuest(c: Context<App>, eventId: string): Promise<GuestRow 
   }
 }
 
-async function hasAliases(db: D1Database): Promise<boolean> {
-  return !!(await db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'guest_aliases'").first());
+async function hasTable(db: D1Database, name: string): Promise<boolean> {
+  return !!(await db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").bind(name).first());
 }
+
+const hasAliases = (db: D1Database) => hasTable(db, "guest_aliases");
 
 async function requireGuest(c: Context<App>, eventId: string): Promise<GuestRow> {
   const guest = await currentGuest(c, eventId);
@@ -247,6 +251,7 @@ async function fullEvent(env: Env, event: EventRow, me: GuestRow) {
     comments: await listComments(db, event.id),
     spotify: await spotifyStatus(env, event.id),
     gifs: !!env.GIPHY_API_KEY,
+    photos: await photosStatus(env, event, me),
   };
 }
 
@@ -341,7 +346,9 @@ app.delete("/parties/:id/guests/:guestId", async (c) => {
 
   const intoId = c.req.query("into");
   if (!intoId) {
+    const files = await photoKeys(db, event.id, "guest_id = ?", dup.id);
     await db.prepare("DELETE FROM guests WHERE id = ?").bind(dup.id).run(); // the rest cascades
+    if (files.length && c.env.PHOTOS) c.executionCtx.waitUntil(c.env.PHOTOS.delete(files));
     return c.json(await fullEvent(c.env, event, me));
   }
   if (intoId === dup.id) throw new HttpError(400, "Choisissez un autre invité");
@@ -360,6 +367,9 @@ app.delete("/parties/:id/guests/:guestId", async (c) => {
     db.prepare("UPDATE guests SET rsvp = COALESCE(rsvp, ?2), is_host = MAX(is_host, ?3), updated_at = datetime('now') WHERE id = ?1")
       .bind(intoId, dup.rsvp, dup.is_host),
   ];
+  if (await hasTable(db, "photos")) {
+    stmts.push(db.prepare("UPDATE photos SET guest_id = ?1 WHERE guest_id = ?2").bind(intoId, dup.id));
+  }
   if (await hasAliases(db)) {
     stmts.push(
       db.prepare("UPDATE guest_aliases SET guest_id = ?1 WHERE guest_id = ?2").bind(intoId, dup.id),
@@ -450,6 +460,8 @@ app.delete("/parties/:id", async (c) => {
   const me = await requireGuest(c, event.id);
   if (me.is_host !== 1) throw new HttpError(403, "Seul l'hôte peut supprimer l'événement");
   await c.env.DB.prepare("DELETE FROM events WHERE id = ?").bind(event.id).run();
+  // The photo files aren't in D1, so they don't cascade: remove everything under the event's prefix.
+  if (c.env.PHOTOS) c.executionCtx.waitUntil(deletePrefix(c.env.PHOTOS, `${event.id}/`));
   return c.json({ deleted: true });
 });
 
@@ -580,14 +592,37 @@ app.delete("/parties/:id/comments/:commentId", async (c) => {
 const COLORS = ["", "metro", "bleu", "vert", "rose", "rouge", "orange", "nuit", "disco", "foret"];
 const HEX = /^#[0-9a-f]{6}$/i;
 
-// A preset name, or custom colors saved as JSON: {"accent":"#rrggbb","bg":"#rrggbb","card":"#rrggbb"}.
+// Must match FONTS and CARDS in public/app.js.
+const FONTS = ["bricolage", "system", "playfair", "abril", "limelight", "bebas", "poppins", "spacemono", "pacifico", "lobster", "dancing", "caveat"];
+const CARDS = ["hero", "info", "rsvp", "guests", "music", "photos", "comments"];
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+
+// Per-card fonts and text colors: {"info": {"titleFont": "playfair", "title": "#rrggbb", "textFont": "...", "text": "#rrggbb"}, ...}
+function validCards(cards: unknown): boolean {
+  if (!isObject(cards)) return false;
+  return Object.entries(cards).every(
+    ([key, style]) =>
+      CARDS.includes(key) &&
+      isObject(style) &&
+      Object.entries(style).every(([prop, v]) =>
+        prop === "titleFont" || prop === "textFont"
+          ? typeof v === "string" && FONTS.includes(v)
+          : (prop === "title" || prop === "text") && typeof v === "string" && HEX.test(v),
+      ),
+  );
+}
+
+// A preset name, or JSON: either {"theme": preset} or custom colors {"accent","bg","card"} (all "#rrggbb"),
+// plus optional "cards" (see validCards).
 function validColor(color: unknown): color is string {
   if (typeof color !== "string") return false;
   if (COLORS.includes(color)) return true;
-  if (color.length > 200 || !color.startsWith("{")) return false;
+  if (color.length > 4000 || !color.startsWith("{")) return false;
   try {
-    const v = JSON.parse(color);
+    const { cards, ...v } = JSON.parse(color);
+    if (cards !== undefined && !validCards(cards)) return false;
     const keys = Object.keys(v);
+    if ("theme" in v) return keys.length === 1 && typeof v.theme === "string" && COLORS.includes(v.theme);
     return keys.length === 3 && ["accent", "bg", "card"].every((k) => typeof v[k] === "string" && HEX.test(v[k]));
   } catch {
     return false;
@@ -654,6 +689,193 @@ app.delete("/parties/:id/background", async (c) => {
     c.env.DB.prepare("UPDATE events SET background_version = 0, updated_at = datetime('now') WHERE id = ?").bind(event.id),
   ]);
   return c.json(await fullEvent(c.env, { ...event, background_version: 0 }, me));
+});
+
+// ---------- photo album ----------
+// Guests post photos of the party. The browser resizes each one (about 1600px JPEG, which
+// also drops EXIF data such as GPS position) and makes a small thumbnail for the grid.
+// Files go to R2, the list of who posted what to D1 (table photos).
+
+const PHOTO_TYPES = ["image/jpeg", "image/webp"];
+const PHOTO_MAX_BYTES = 2_000_000;
+const THUMB_MAX_BYTES = 300_000;
+const PHOTOS_PER_EVENT = 1000;
+const PHOTOS_PER_HOUR = 100; // per guest
+const PARTY_TZ = "Europe/Paris"; // event dates are local to Paris (the app is in French)
+
+type PhotoRow = { id: string; guest_id: string; name: string; width: number; height: number; created_at: string };
+
+const todayInParis = () => new Intl.DateTimeFormat("en-CA", { timeZone: PARTY_TZ }).format(new Date()); // YYYY-MM-DD
+
+// Album state for this guest, or { enabled: false } until R2 and migration 0009 are in.
+async function photosStatus(env: Env, event: EventRow, me: GuestRow) {
+  const off = { enabled: false, partyDayOnly: false, canUpload: false, photos: [] };
+  if (!env.PHOTOS) return off;
+  let partyDay: { photos_party_day: number } | null;
+  let rows: PhotoRow[];
+  try {
+    partyDay = await env.DB.prepare("SELECT photos_party_day FROM events WHERE id = ?").bind(event.id).first();
+    rows = (
+      await env.DB.prepare(
+        `SELECT p.id, p.guest_id, g.name, p.width, p.height, p.created_at
+         FROM photos p JOIN guests g ON g.id = p.guest_id
+         WHERE p.event_id = ? ORDER BY p.created_at DESC, p.rowid DESC LIMIT ${PHOTOS_PER_EVENT}`,
+      )
+        .bind(event.id)
+        .all<PhotoRow>()
+    ).results;
+  } catch (err) {
+    if (/no such (table|column)/.test(String(err))) return off; // before migration 0009
+    throw err;
+  }
+  const partyDayOnly = partyDay?.photos_party_day === 1;
+  return {
+    enabled: true,
+    partyDayOnly,
+    canUpload: me.is_host === 1 || !partyDayOnly || todayInParis() >= event.date,
+    photos: rows.map((r) => ({ id: r.id, guestId: r.guest_id, name: r.name, width: r.width, height: r.height, createdAt: r.created_at })),
+  };
+}
+
+function requireBucket(env: Env): R2Bucket {
+  if (!env.PHOTOS) throw new HttpError(503, "L'album photo n'est pas encore activé sur ce site");
+  return env.PHOTOS;
+}
+
+const photoKey = (eventId: string, photoId: string, thumb = false) => `${eventId}/${photoId}${thumb ? ".thumb" : ""}`;
+
+// R2 keys of an event's photos matching a condition, e.g. one guest's.
+async function photoKeys(db: D1Database, eventId: string, where: string, ...params: string[]): Promise<string[]> {
+  if (!(await hasTable(db, "photos"))) return [];
+  const { results } = await db.prepare(`SELECT id FROM photos WHERE event_id = ? AND ${where}`).bind(eventId, ...params).all<{ id: string }>();
+  return results.flatMap((r) => [photoKey(eventId, r.id), photoKey(eventId, r.id, true)]);
+}
+
+async function deletePrefix(bucket: R2Bucket, prefix: string) {
+  let cursor: string | undefined;
+  do {
+    const page = await bucket.list({ prefix, cursor, limit: 1000 });
+    if (page.objects.length) await bucket.delete(page.objects.map((o) => o.key));
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+}
+
+// Is this really a JPEG or WebP (not something else with an image Content-Type)?
+function looksLikeImage(bytes: Uint8Array, mime: string): boolean {
+  if (mime === "image/jpeg") return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  const tag = (from: number) => String.fromCharCode(...bytes.slice(from, from + 4));
+  return tag(0) === "RIFF" && tag(8) === "WEBP";
+}
+
+async function imageFile(value: unknown, field: string, maxBytes: number): Promise<{ bytes: Uint8Array; mime: string }> {
+  if (!(value instanceof File)) throw new HttpError(400, `Photo manquante (${field})`);
+  const mime = value.type.split(";")[0].trim();
+  if (!PHOTO_TYPES.includes(mime)) throw new HttpError(415, "Format de photo non pris en charge");
+  if (value.size === 0) throw new HttpError(400, "Photo vide");
+  if (value.size > maxBytes) throw new HttpError(413, `Photo trop lourde (${Math.round(maxBytes / 1_000_000)} Mo max)`);
+  const bytes = new Uint8Array(await value.arrayBuffer());
+  if (!looksLikeImage(bytes, mime)) throw new HttpError(415, "Ce fichier n'est pas une photo");
+  return { bytes, mime };
+}
+
+// Upload one photo: multipart form with "photo" (the big one), "thumb", "width" and "height".
+app.post("/parties/:id/photos", async (c) => {
+  const db = c.env.DB;
+  const event = await getEvent(db, c.req.param("id"));
+  const me = await requireGuest(c, event.id);
+  const bucket = requireBucket(c.env);
+  const status = await photosStatus(c.env, event, me);
+  if (!status.enabled) throw new HttpError(503, "L'album photo n'est pas encore activé sur ce site");
+  if (!status.canUpload) throw new HttpError(403, "L'album ouvre le jour de la fête");
+  if (status.photos.length >= PHOTOS_PER_EVENT) throw new HttpError(409, "L'album est plein");
+  const recent = await db
+    .prepare("SELECT COUNT(*) AS n FROM photos WHERE guest_id = ? AND created_at > datetime('now', '-1 hour')")
+    .bind(me.id)
+    .first<{ n: number }>();
+  if ((recent?.n ?? 0) >= PHOTOS_PER_HOUR) throw new HttpError(429, "Ça fait beaucoup de photos ! Réessayez dans un moment");
+
+  let form: Record<string, unknown>;
+  try {
+    form = await c.req.parseBody();
+  } catch {
+    throw new HttpError(400, "Requête invalide");
+  }
+  const photo = await imageFile(form.photo, "photo", PHOTO_MAX_BYTES);
+  const thumb = await imageFile(form.thumb, "thumb", THUMB_MAX_BYTES);
+  const size = (v: unknown) => {
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 1 || n > 10000) throw new HttpError(400, "Dimensions invalides");
+    return n;
+  };
+  const width = size(form.width);
+  const height = size(form.height);
+
+  const id = randomId(12);
+  await Promise.all([
+    bucket.put(photoKey(event.id, id), photo.bytes, { httpMetadata: { contentType: photo.mime } }),
+    bucket.put(photoKey(event.id, id, true), thumb.bytes, { httpMetadata: { contentType: thumb.mime } }),
+  ]);
+  await db
+    .prepare("INSERT INTO photos (id, event_id, guest_id, width, height, bytes) VALUES (?, ?, ?, ?, ?, ?)")
+    .bind(id, event.id, me.id, width, height, photo.bytes.byteLength)
+    .run();
+  return c.json({ id, photos: await photosStatus(c.env, event, me) }, 201);
+});
+
+// The image itself. Like the background, it works from an <img> tag without the guest
+// token: the event id and photo id are both random, so the URL can't be guessed.
+// ?thumb=1 gives the small version, ?download=1 asks the browser to save it.
+app.get("/parties/:id/photos/:photoId", async (c) => {
+  const eventId = c.req.param("id");
+  const photoId = c.req.param("photoId");
+  const bucket = requireBucket(c.env);
+  let row: { created_at: string } | null = null;
+  try {
+    row = await c.env.DB.prepare("SELECT created_at FROM photos WHERE id = ? AND event_id = ?").bind(photoId, eventId).first();
+  } catch (err) {
+    if (!/no such table/.test(String(err))) throw err;
+  }
+  if (!row) throw new HttpError(404, "Photo introuvable");
+  const obj = await bucket.get(photoKey(eventId, photoId, !!c.req.query("thumb")));
+  if (!obj) throw new HttpError(404, "Photo introuvable");
+  const headers: Record<string, string> = {
+    "Content-Type": obj.httpMetadata?.contentType || "image/jpeg",
+    "Cache-Control": "private, max-age=31536000, immutable", // a photo never changes
+    "X-Content-Type-Options": "nosniff",
+  };
+  if (c.req.query("download")) {
+    const ext = headers["Content-Type"] === "image/webp" ? "webp" : "jpg";
+    headers["Content-Disposition"] = `attachment; filename="photo-${row.created_at.replace(/\D/g, "").slice(0, 14)}-${photoId}.${ext}"`;
+  }
+  return new Response(obj.body, { headers });
+});
+
+// Authors delete their own photos; hosts delete any.
+app.delete("/parties/:id/photos/:photoId", async (c) => {
+  const db = c.env.DB;
+  const event = await getEvent(db, c.req.param("id"));
+  const me = await requireGuest(c, event.id);
+  const bucket = requireBucket(c.env);
+  const photoId = c.req.param("photoId");
+  const row = await db.prepare("SELECT guest_id FROM photos WHERE id = ? AND event_id = ?").bind(photoId, event.id).first<{ guest_id: string }>();
+  if (!row) throw new HttpError(404, "Photo introuvable");
+  if (row.guest_id !== me.id && me.is_host !== 1) throw new HttpError(403, "Vous ne pouvez supprimer que vos propres photos");
+  await db.prepare("DELETE FROM photos WHERE id = ?").bind(photoId).run();
+  await bucket.delete([photoKey(event.id, photoId), photoKey(event.id, photoId, true)]);
+  return c.json({ photos: await photosStatus(c.env, event, me) });
+});
+
+// Host setting: { partyDayOnly: true } keeps the album closed to guests until the day of the party.
+app.put("/parties/:id/photos-settings", async (c) => {
+  const event = await getEvent(c.env.DB, c.req.param("id"));
+  const me = await requireGuest(c, event.id);
+  if (me.is_host !== 1) throw new HttpError(403, "Seul l'hôte peut changer les réglages de l'album");
+  const partyDayOnly = (await body(c)).partyDayOnly;
+  if (typeof partyDayOnly !== "boolean") throw new HttpError(400, "partyDayOnly doit être vrai ou faux");
+  await c.env.DB.prepare("UPDATE events SET photos_party_day = ?, updated_at = datetime('now') WHERE id = ?")
+    .bind(partyDayOnly ? 1 : 0, event.id)
+    .run();
+  return c.json(await fullEvent(c.env, event, me));
 });
 
 // ---------- Spotify: guests add songs to the host's playlist ----------

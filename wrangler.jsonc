@@ -19,6 +19,8 @@
       "migrations_dir": "migrations"
     }
   ],
+  // Photo album files (see migration 0009). The bucket must exist before deploying.
+  "r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "party-invite-photos" }],
   // Preview deployments (Workers Builds on non-main branches, `wrangler preview`)
   // use their own database so they never touch production data.
   "previews": {
@@ -29,7 +31,8 @@
         "database_id": "21d86b3e-9164-4dc0-9446-b75bb31877c6",
         "migrations_dir": "migrations"
       }
-    ]
+    ],
+    "r2_buckets": [{ "binding": "PHOTOS", "bucket_name": "party-invite-photos-preview" }]
   },
   "observability": { "enabled": true }
 }
