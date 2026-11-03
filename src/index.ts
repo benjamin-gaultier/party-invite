@@ -580,14 +580,37 @@ app.delete("/parties/:id/comments/:commentId", async (c) => {
 const COLORS = ["", "metro", "bleu", "vert", "rose", "rouge", "orange", "nuit", "disco", "foret"];
 const HEX = /^#[0-9a-f]{6}$/i;
 
-// A preset name, or custom colors saved as JSON: {"accent":"#rrggbb","bg":"#rrggbb","card":"#rrggbb"}.
+// Must match FONTS and CARDS in public/app.js.
+const FONTS = ["bricolage", "system", "playfair", "abril", "limelight", "bebas", "poppins", "spacemono", "pacifico", "lobster", "dancing", "caveat"];
+const CARDS = ["hero", "info", "rsvp", "guests", "music", "comments"];
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+
+// Per-card fonts and text colors: {"info": {"titleFont": "playfair", "title": "#rrggbb", "textFont": "...", "text": "#rrggbb"}, ...}
+function validCards(cards: unknown): boolean {
+  if (!isObject(cards)) return false;
+  return Object.entries(cards).every(
+    ([key, style]) =>
+      CARDS.includes(key) &&
+      isObject(style) &&
+      Object.entries(style).every(([prop, v]) =>
+        prop === "titleFont" || prop === "textFont"
+          ? typeof v === "string" && FONTS.includes(v)
+          : (prop === "title" || prop === "text") && typeof v === "string" && HEX.test(v),
+      ),
+  );
+}
+
+// A preset name, or JSON: either {"theme": preset} or custom colors {"accent","bg","card"} (all "#rrggbb"),
+// plus optional "cards" (see validCards).
 function validColor(color: unknown): color is string {
   if (typeof color !== "string") return false;
   if (COLORS.includes(color)) return true;
-  if (color.length > 200 || !color.startsWith("{")) return false;
+  if (color.length > 4000 || !color.startsWith("{")) return false;
   try {
-    const v = JSON.parse(color);
+    const { cards, ...v } = JSON.parse(color);
+    if (cards !== undefined && !validCards(cards)) return false;
     const keys = Object.keys(v);
+    if ("theme" in v) return keys.length === 1 && typeof v.theme === "string" && COLORS.includes(v.theme);
     return keys.length === 3 && ["accent", "bg", "card"].every((k) => typeof v[k] === "string" && HEX.test(v[k]));
   } catch {
     return false;

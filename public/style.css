@@ -294,13 +294,25 @@ body:has(.bg-control) .toast { bottom: calc(80px + env(safe-area-inset-bottom));
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
   max-width: calc(100% - 32px);
 }
+.color-picker { max-height: calc(100dvh - 110px - env(safe-area-inset-bottom)); overflow-y: auto; width: 290px; }
 .color-picker[hidden] { display: none; }
 .color-picker p { margin: 0 0 8px; }
 .swatches { display: grid; grid-template-columns: repeat(5, 40px); gap: 10px; margin-bottom: 14px; }
 .custom-colors { display: grid; gap: 8px; margin-bottom: 12px; }
 .custom-colors label { flex-direction: row; align-items: center; gap: 10px; font-size: 0.95rem; }
 .custom-colors input[type="color"] { width: 44px !important; height: 32px; padding: 2px; border-radius: 8px; flex: none; cursor: pointer; }
-#color-save { width: 100%; }
+#color-save { width: 100%; position: sticky; bottom: 0; }
+.card-style { display: grid; gap: 8px; margin-bottom: 12px; }
+.card-style label { font-size: 0.95rem; }
+.card-style select { font: inherit; width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--fill, var(--bg)); color: var(--text); }
+.card-style .color-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.card-style .color-row label { flex-direction: row; align-items: center; gap: 10px; }
+.card-style input[type="color"] { width: 44px !important; height: 32px; padding: 2px; border-radius: 8px; flex: none; cursor: pointer; }
+.card-style [hidden] { display: none; }
+#card-reset { justify-self: start; }
+/* Flash on the card being styled, so the host sees which one it is. */
+.card-target { animation: card-target 1.2s ease-out; }
+@keyframes card-target { 0%, 40% { outline: 3px solid var(--accent); outline-offset: 3px; } 100% { outline: 3px solid transparent; outline-offset: 3px; } }
 .swatch {
   width: 40px;
   height: 40px;
