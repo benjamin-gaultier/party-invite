@@ -642,7 +642,7 @@ app.delete("/parties/:id/comments/:commentId", async (c) => {
 
 // ---------- colors ----------
 // Must match COLORS in public/app.js.
-const COLORS = ["", "metro", "bleu", "vert", "rose", "rouge", "orange", "nuit", "disco", "foret"];
+const COLORS = ["", "violet", "metro", "bleu", "vert", "rose", "rouge", "orange", "nuit", "disco", "foret"];
 const HEX = /^#[0-9a-f]{6}$/i;
 
 // Must match FONTS and CARDS in public/app.js.

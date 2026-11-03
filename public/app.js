@@ -240,7 +240,8 @@ function extraFields(event = {}) {
 // Must match COLORS in src/index.ts. "" is the default violet (follows light/dark mode).
 // Each theme sets buttons/links (accent), the page background (bg) and the cards (card).
 const COLORS = {
-  "": { name: "Violet", accent: "#7c3aed", bg: "#faf7ff", card: "#ffffff" },
+  "": { name: "Nuit blanche", accent: "#c6f432", bg: "#111014", card: "#1e1c24" },
+  violet: { name: "Violet", accent: "#7c3aed", bg: "#faf7ff", card: "#ffffff" },
   metro: { name: "Métro la nuit", accent: "#ffcd00", bg: "#0f1d38", card: "#1a2b4f" },
   bleu: { name: "Bleu RATP", accent: "#0055c8", bg: "#e6efff", card: "#ffffff" },
   vert: { name: "Vert", accent: "#00814f", bg: "#e3f5ec", card: "#ffffff" },
@@ -373,6 +374,7 @@ function applyColor(value) {
   for (const prop of COLOR_PROPS) style.removeProperty(prop);
   applyCardStyles(parseStyle(value).cards);
   const c = parseColor(value);
+  document.body.classList.toggle("light-ui", !!c && !isDark(c.card));
   if (!c) return;
   const text = isDark(c.card) ? "#f3efff" : "#1b1033";
   style.setProperty("--accent", c.accent);
