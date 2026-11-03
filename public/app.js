@@ -878,11 +878,13 @@ function spaceHtml(eventId, data, identity) {
       <form id="comment-form" class="comment-form" autocomplete="off">
         <ul class="mention-list" id="mention-list" role="listbox" hidden></ul>
         <div class="reply-bar" id="reply-bar" hidden></div>
-        <textarea name="body" rows="2" maxlength="1000" placeholder="Écrivez un mot… (@ pour taguer quelqu'un)"></textarea>
+        <div class="attachments" id="attachments" hidden></div>
+        <div class="comment-input" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Votre commentaire" data-placeholder="Écrivez un mot… (@ pour taguer quelqu'un)"></div>
         <div class="composer-bar">
           <button type="button" class="tool" id="emoji-open" aria-expanded="false" aria-label="Ajouter un emoji" title="Emojis">😊</button>
           ${data.gifs ? `<button type="button" class="tool gif-tool" id="gif-open" aria-expanded="false" aria-label="Ajouter un GIF" title="GIFs">GIF</button>` : ""}
           <button type="button" class="tool" id="mention-open" aria-label="Taguer quelqu'un" title="Taguer quelqu'un">@</button>
+          ${data.pictures ? `<button type="button" class="tool" id="pic-open" aria-label="Ajouter une photo ou un GIF" title="Photo ou GIF du téléphone">📷</button><input type="file" id="pic-file" accept="image/*" multiple hidden>` : ""}
           <button class="primary" type="submit">Envoyer</button>
         </div>
         <div class="emoji-panel" id="emoji-panel" hidden>
@@ -1554,7 +1556,7 @@ function liveParts(html) {
 // Someone is in the middle of something here: don't pull the rug.
 function inUse(el) {
   const a = document.activeElement;
-  if (a && a !== document.body && el.contains(a) && a.matches("input, textarea, select")) return true;
+  if (a && a !== document.body && el.contains(a) && a.matches("input, textarea, select, [contenteditable]")) return true;
   if ([...el.querySelectorAll("button")].some((b) => b.disabled)) return true; // request on its way
   const search = el.querySelector("#song-search input");
   return !!(search && search.value.trim());
@@ -1611,7 +1613,7 @@ function patchSpace(data) {
 
 // What is typed in the comment box (and what it answers), so a redraw can put it back.
 function captureDraft() {
-  const textarea = document.querySelector("#comment-form textarea");
+  const textarea = plainEditor(document.querySelector("#comment-form .comment-input"));
   if (!textarea || !space?.comments) return null;
   return {
     value: textarea.value,
@@ -1624,7 +1626,7 @@ function captureDraft() {
 }
 
 function restoreDraft(draft) {
-  const textarea = document.querySelector("#comment-form textarea");
+  const textarea = plainEditor(document.querySelector("#comment-form .comment-input"));
   if (!textarea) return;
   textarea.value = draft.value;
   if (draft.replyTo) space.comments.setReply(draft.replyTo);
@@ -1636,6 +1638,104 @@ function restoreDraft(draft) {
 }
 
 // ---------- comment wall ----------
+
+// The comment box is a contenteditable div rather than a <textarea>: phone keyboards
+// (Gboard, Samsung) only enable their GIF/sticker button in fields that accept rich
+// content. We keep it plain text and give it the bits of the textarea API we use
+// (value, selectionStart/End, setSelectionRange), so the rest of the code doesn't care.
+function plainEditor(el) {
+  if (!el || el._plain) return el;
+  el._plain = true;
+
+  // Caret position as an offset into the text.
+  const offsetOf = (node, offset) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.setEnd(node, offset);
+    return range.toString().length;
+  };
+  const selection = () => {
+    const sel = getSelection();
+    if (!sel.rangeCount || !el.contains(sel.anchorNode)) return null;
+    const r = sel.getRangeAt(0);
+    return [offsetOf(r.startContainer, r.startOffset), offsetOf(r.endContainer, r.endOffset)];
+  };
+  const pointAt = (pos) => {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let node;
+    let last = null;
+    while ((node = walker.nextNode())) {
+      if (pos <= node.length) return [node, pos];
+      pos -= node.length;
+      last = node;
+    }
+    return last ? [last, last.length] : [el, 0];
+  };
+  const text = () => el.textContent;
+  const setText = (value) => {
+    el.textContent = value;
+    // A trailing newline only shows (and takes the caret) with something after it.
+    if (value.endsWith("\n")) el.append(Object.assign(document.createElement("br"), { className: "end" }));
+    el.classList.toggle("empty", !value);
+  };
+
+  Object.defineProperties(el, {
+    value: { get: text, set: setText },
+    selectionStart: { get: () => selection()?.[0] ?? text().length },
+    selectionEnd: { get: () => selection()?.[1] ?? text().length },
+  });
+  el.setSelectionRange = (start, end = start) => {
+    const range = document.createRange();
+    range.setStart(...pointAt(start));
+    range.setEnd(...pointAt(end));
+    const sel = getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  };
+  const insertText = (str) => {
+    const [start, end] = selection() || [text().length, text().length];
+    setText(text().slice(0, start) + str + text().slice(end));
+    el.setSelectionRange(start + str.length);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  // Keep it plain text: new lines become "\n", pasted rich text becomes text, and
+  // anything else the browser slips in (a <div>, a <br>, an <img>) is flattened.
+  el.addEventListener("beforeinput", (ev) => {
+    if (ev.inputType === "insertParagraph" || ev.inputType === "insertLineBreak") {
+      ev.preventDefault();
+      insertText("\n");
+    }
+  });
+  el.addEventListener("paste", (ev) => {
+    const files = [...(ev.clipboardData?.files || [])];
+    ev.preventDefault();
+    if (files.length) {
+      el.dispatchEvent(new CustomEvent("media", { detail: files }));
+      return;
+    }
+    insertText((ev.clipboardData?.getData("text/plain") || "").replace(/\r\n?/g, "\n"));
+  });
+  el.addEventListener("drop", (ev) => {
+    const files = [...(ev.dataTransfer?.files || [])];
+    if (!files.length) return;
+    ev.preventDefault();
+    el.dispatchEvent(new CustomEvent("media", { detail: files }));
+  });
+  el.addEventListener("input", () => {
+    if (el.querySelector("*:not(br.end)") || el.querySelectorAll("br").length > 1) {
+      // Something rich got in (e.g. a keyboard inserted an image): keep only the text.
+      const imgs = [...el.querySelectorAll("img")].map((i) => i.src).filter(Boolean);
+      const pos = el.selectionStart;
+      setText(el.innerText.replace(/\n$/, ""));
+      el.setSelectionRange(Math.min(pos, text().length));
+      if (imgs.length) el.dispatchEvent(new CustomEvent("media", { detail: imgs }));
+    }
+    el.classList.toggle("empty", !text());
+  });
+  el.classList.toggle("empty", !text());
+  return el;
+}
 
 const EMOJIS = [
   "😂", "🥰", "😍", "😘", "😎", "🤩", "🥳", "😭", "🤣", "😅", "🙏", "👏",
@@ -1671,25 +1771,33 @@ const REPLY_LINE = /^\[reply:([A-Za-z0-9_-]{1,40})\]$/;
 
 // Splits a stored comment into its text, the GIFs it carries ("[gif:ID]" lines) and the
 // comment it answers (a first "[reply:ID]" line).
+// Photos/GIFs from the phone: "[img:ID:WxH]" lines, files served by the Worker from R2.
+const IMG_LINE = /^\[img:([A-Za-z0-9_-]{8,40}):(\d+)x(\d+)\]$/;
+
 function parseComment(body) {
   const gifs = [];
+  const pics = [];
   const lines = [];
   let replyTo = null;
   for (const [i, line] of body.split("\n").entries()) {
     const r = i === 0 && line.trim().match(REPLY_LINE);
     const m = line.trim().match(GIF_LINE);
+    const p = line.trim().match(IMG_LINE);
     if (r) replyTo = r[1];
     else if (m) gifs.push(m[1]);
+    else if (p) pics.push({ id: p[1], width: +p[2], height: +p[3] });
     else lines.push(line);
   }
-  return { text: lines.join("\n").trim(), gifs, replyTo };
+  return { text: lines.join("\n").trim(), gifs, pics, replyTo };
 }
+
+const mediaLabel = ({ gifs, pics }) => (pics.length ? "📷 Photo" : gifs.length ? "GIF" : "");
 
 // One-line preview of a comment for quotes.
 function quoteText(body) {
-  const { text, gifs } = parseComment(body);
-  const t = text.replace(/\s+/g, " ");
-  return (t.length > 80 ? t.slice(0, 77) + "…" : t) || (gifs.length ? "GIF" : "");
+  const parsed = parseComment(body);
+  const t = parsed.text.replace(/\s+/g, " ");
+  return (t.length > 80 ? t.slice(0, 77) + "…" : t) || mediaLabel(parsed);
 }
 
 function mentionsMe(text, myName) {
@@ -1697,10 +1805,52 @@ function mentionsMe(text, myName) {
   return re.test(text);
 }
 
+// Pictures waiting to go out with the next comment. Kept outside setupComments so a
+// redraw of the page (live updates) doesn't drop them.
+const MAX_COMMENT_PICS = 4;
+let pendingPics = [];
+
+// Photos are shrunk like album photos; GIFs are sent as they are so they keep moving.
+async function uploadCommentPicture(eventId, token, file) {
+  let blob = file;
+  let width;
+  let height;
+  if (file.type === "image/gif" && file.size <= 4_000_000) {
+    const bitmap = await createImageBitmap(file);
+    [width, height] = [bitmap.width, bitmap.height];
+    bitmap.close?.();
+  } else {
+    let bitmap;
+    try {
+      bitmap = await createImageBitmap(file);
+    } catch {
+      throw new Error("Impossible de lire cette image");
+    }
+    try {
+      ({ blob, width, height } = await encodeJpeg(bitmap, 1600, 1_900_000));
+    } finally {
+      bitmap.close?.();
+    }
+  }
+  let res;
+  try {
+    res = await fetch(`/api/parties/${eventId}/comment-images`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": blob.type || "image/jpeg" },
+      body: blob,
+    });
+  } catch {
+    throw new Error("Impossible de joindre le serveur. Vérifiez votre connexion.");
+  }
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(out.error || `Erreur (${res.status})`);
+  return `[img:${out.id}:${width}x${height}]`;
+}
+
 function setupComments(eventId, me, initial, token, guests) {
   const list = document.getElementById("comments");
   const form = document.getElementById("comment-form");
-  const textarea = form.querySelector("textarea");
+  const textarea = plainEditor(form.querySelector(".comment-input"));
   const sendBtn = form.querySelector("button[type=submit]");
   let lastKey = null;
   // Everyone we can tag: guests, plus authors of comments (in case someone joined since).
@@ -1719,9 +1869,9 @@ function setupComments(eventId, me, initial, token, guests) {
   let lastNewest = "";
 
   const snippet = (body) => {
-    const { text, gifs } = parseComment(body);
-    const t = text.length > 60 ? text.slice(0, 57) + "…" : text;
-    return t || (gifs.length ? "GIF" : "");
+    const parsed = parseComment(body);
+    const t = parsed.text.length > 60 ? parsed.text.slice(0, 57) + "…" : parsed.text;
+    return t || mediaLabel(parsed);
   };
 
   function updateNotifications(comments) {
@@ -1814,7 +1964,7 @@ function setupComments(eventId, me, initial, token, guests) {
     list.innerHTML = comments.length
       ? comments
           .map((c) => {
-            const { text, gifs, replyTo } = parseComment(c.body);
+            const { text, gifs, pics, replyTo } = parseComment(c.body);
             const parent = replyTo ? byId.get(replyTo) : null;
             const quote = replyTo
               ? parent
@@ -1841,6 +1991,16 @@ function setupComments(eventId, me, initial, token, guests) {
                 ${quote}
                 ${text ? `<p>${formatCommentText(text, names, me.name)}</p>` : ""}
                 ${gifs.map((id) => `<img class="comment-gif" src="${gifUrl(id)}" alt="GIF" loading="lazy">`).join("")}
+                ${
+                  pics.length
+                    ? `<div class="comment-pics ${pics.length > 1 ? "multi" : ""}">${pics
+                        .map((p) => {
+                          const src = `/api/parties/${esc(eventId)}/comment-images/${esc(p.id)}`;
+                          return `<a href="${src}" target="_blank" rel="noopener"><img src="${src}" alt="Photo" loading="lazy" width="${p.width}" height="${p.height}"></a>`;
+                        })
+                        .join("")}</div>`
+                    : ""
+                }
                 <div class="comment-foot">
                   ${[...groups]
                     .map(
@@ -2089,10 +2249,18 @@ function setupComments(eventId, me, initial, token, guests) {
   });
 
   const send = async (body) => {
+    // Upload the attached pictures first, then post the comment pointing to them.
+    const pending = pendingPics.filter((p) => p.eventId === eventId);
+    if (pending.length) {
+      const lines = [];
+      for (const pic of pending) lines.push(await uploadCommentPicture(eventId, token, pic.file));
+      body = [body, ...lines].filter(Boolean).join("\n");
+    }
     if (replyTo) body = `[reply:${replyTo}]\n${body}`;
     const { comments } = await api(`/parties/${eventId}/comments`, { method: "POST", body: { body }, token });
     textarea.value = "";
     setReply(null);
+    clearPics();
     toggle(emojiBtn, emojiPanel, false);
     if (gifPanel) toggle(gifBtn, gifPanel, false);
     lastKey = null;
@@ -2151,10 +2319,63 @@ function setupComments(eventId, me, initial, token, guests) {
     });
   }
 
+  // ----- photos and GIFs from the phone -----
+  // Picked with 📷, pasted, dropped, or (once browsers allow it) sent by the keyboard.
+  // They wait as thumbnails above the text box and go out with the next "Envoyer".
+  const attachments = document.getElementById("attachments");
+  const drawPics = () => {
+    const mine = pendingPics.filter((p) => p.eventId === eventId);
+    attachments.hidden = !mine.length;
+    attachments.innerHTML = mine
+      .map((p, i) => `<span class="attachment"><img src="${p.url}" alt=""><button type="button" data-unpick="${i}" aria-label="Retirer">✕</button></span>`)
+      .join("");
+  };
+  const clearPics = () => {
+    for (const p of pendingPics) URL.revokeObjectURL(p.url);
+    pendingPics = [];
+    drawPics();
+  };
+  const addPics = (files) => {
+    if (!document.getElementById("pic-open")) return toast("Les photos ne sont pas encore activées sur ce site");
+    const images = [...files].filter((f) => f instanceof File && f.type.startsWith("image/"));
+    if (!images.length) return toast("Ce fichier n'est pas une image");
+    for (const file of images) {
+      if (pendingPics.length >= MAX_COMMENT_PICS) {
+        toast(`${MAX_COMMENT_PICS} images maximum par commentaire`);
+        break;
+      }
+      pendingPics.push({ eventId, file, url: URL.createObjectURL(file) });
+    }
+    drawPics();
+  };
+  if (pendingPics.some((p) => p.eventId !== eventId)) clearPics();
+  drawPics();
+  attachments.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-unpick]");
+    if (!btn) return;
+    const [removed] = pendingPics.splice(Number(btn.dataset.unpick), 1);
+    URL.revokeObjectURL(removed.url);
+    drawPics();
+  });
+  textarea.addEventListener("media", (ev) => {
+    const files = ev.detail.filter((f) => f instanceof File);
+    if (files.length) addPics(files);
+    else toast("Ce clavier n'envoie pas encore d'images à ce site : utilisez le bouton 📷");
+  });
+  const picBtn = document.getElementById("pic-open");
+  const picFile = document.getElementById("pic-file");
+  if (picBtn) {
+    picBtn.addEventListener("click", () => picFile.click());
+    picFile.addEventListener("change", () => {
+      addPics(picFile.files);
+      picFile.value = "";
+    });
+  }
+
   form.addEventListener("submit", (ev) => {
     ev.preventDefault();
-    const body = textarea.value.trim();
-    if (!body) return;
+    const body = textarea.value.trim().slice(0, 1000);
+    if (!body && !pendingPics.some((p) => p.eventId === eventId)) return;
     withBusy(sendBtn, () => send(body));
   });
 
