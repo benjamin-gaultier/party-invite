@@ -72,6 +72,8 @@ and a toast pops up when something new arrives while the page is open. No phone 
 
 "Répondre" quotes the comment above the text box; the reply is stored with a first `[reply:ID]` line, shown as a quote you can tap to jump to the original, and notifies its author in the 🔔.
 
+Guests can attach up to 4 photos or GIFs from their phone to a comment (📷, paste or drop). Photos are shrunk in the browser to about 1600px JPEG, and GIFs (4 MB max) are kept as they are so they still move. Files go to the album's R2 bucket under `<event>/c/<id>`, and the comment carries `[img:ID:WxH]` lines, so there is no extra table. Deleting the comment or the event deletes the files.
+
 GIF search goes through the Worker (`GET /api/parties/:id/gifs?q=`) so the key stays secret.
 Setup: create an app at <https://developers.giphy.com/dashboard/> (API, not SDK) and set its
 key as the Worker secret `GIPHY_API_KEY`. Without it the GIF button is hidden. A free key

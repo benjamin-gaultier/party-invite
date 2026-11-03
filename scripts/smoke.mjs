@@ -85,6 +85,23 @@ check("non-emoji reaction rejected", (await call(`/parties/${eventId}/comments/$
 check("like unknown comment -> 404", (await call(`/parties/${eventId}/comments/nope/like`, { method: "PUT", body: { liked: true }, token: guest.token })).status === 404);
 check("like needs a token", (await call(`/parties/${eventId}/comments/${target.id}/like`, { method: "PUT", body: { liked: true } })).status === 401);
 
+// Pictures in comments (R2)
+{
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1]);
+  const up = await fetch(`${base}/api/parties/${eventId}/comment-images`, { method: "POST", headers: { Authorization: `Bearer ${guest.token}`, "Content-Type": "image/jpeg" }, body: jpeg });
+  const upData = await up.json();
+  check("guest uploads a comment picture", up.status === 201 && upData.id);
+  const fake = await fetch(`${base}/api/parties/${eventId}/comment-images`, { method: "POST", headers: { Authorization: `Bearer ${guest.token}`, "Content-Type": "image/gif" }, body: "<script>" });
+  check("non-image rejected", fake.status === 415);
+  check("upload needs a token", (await fetch(`${base}/api/parties/${eventId}/comment-images`, { method: "POST", headers: { "Content-Type": "image/jpeg" }, body: jpeg })).status === 401);
+  const got = await fetch(`${base}/api/parties/${eventId}/comment-images/${upData.id}`);
+  check("picture is served", got.status === 200 && got.headers.get("content-type") === "image/jpeg");
+  const posted = await call(`/parties/${eventId}/comments`, { method: "POST", body: { body: `Regardez !\n[img:${upData.id}:800x600]` }, token: guest.token });
+  const pc = posted.data.comments.at(-1);
+  await call(`/parties/${eventId}/comments/${pc.id}`, { method: "DELETE", token: guest.token });
+  check("deleting the comment deletes the picture", (await fetch(`${base}/api/parties/${eventId}/comment-images/${upData.id}`)).status === 404);
+}
+
 // GIFs: only when the Worker has a GIPHY key (run with scripts/fake-giphy.mjs to test them).
 const gifsOn = (await call(`/parties/${eventId}`, { token: guest.token })).data.gifs;
 if (gifsOn) {

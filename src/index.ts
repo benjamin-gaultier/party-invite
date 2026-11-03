@@ -252,6 +252,7 @@ async function fullEvent(env: Env, event: EventRow, me: GuestRow) {
     spotify: await spotifyStatus(env, event.id),
     gifs: !!env.GIPHY_API_KEY,
     photos: await photosStatus(env, event, me),
+    pictures: !!env.PHOTOS, // photos/GIFs from the phone in comments
   };
 }
 
@@ -578,12 +579,15 @@ app.get("/parties/:id/gifs", async (c) => {
 app.delete("/parties/:id/comments/:commentId", async (c) => {
   const event = await getEvent(c.env.DB, c.req.param("id"));
   const me = await requireGuest(c, event.id);
-  const row = await c.env.DB.prepare("SELECT guest_id FROM comments WHERE id = ? AND event_id = ?")
+  const row = await c.env.DB.prepare("SELECT guest_id, body FROM comments WHERE id = ? AND event_id = ?")
     .bind(c.req.param("commentId"), event.id)
-    .first<{ guest_id: string }>();
+    .first<{ guest_id: string; body: string }>();
   if (!row) throw new HttpError(404, "Commentaire introuvable");
   if (row.guest_id !== me.id && me.is_host !== 1) throw new HttpError(403, "Vous ne pouvez supprimer que vos propres commentaires");
   await c.env.DB.prepare("DELETE FROM comments WHERE id = ?").bind(c.req.param("commentId")).run();
+  // Pictures attached to the comment live in R2 only: remove them too.
+  const keys = commentImageIds(row.body).map((id) => commentImageKey(event.id, id));
+  if (keys.length && c.env.PHOTOS) c.executionCtx.waitUntil(c.env.PHOTOS.delete(keys));
   return c.json({ comments: await listComments(c.env.DB, event.id) });
 });
 
@@ -848,6 +852,56 @@ app.get("/parties/:id/photos/:photoId", async (c) => {
     headers["Content-Disposition"] = `attachment; filename="photo-${row.created_at.replace(/\D/g, "").slice(0, 14)}-${photoId}.${ext}"`;
   }
   return new Response(obj.body, { headers });
+});
+
+// ---------- pictures in comments ----------
+// A guest attaches photos or GIFs from their phone to a comment. The browser shrinks photos
+// (about 1600px JPEG); GIFs are kept as they are so they still move. Files go to the same
+// R2 bucket as the album, under <event>/c/<id>, and the comment carries an "[img:ID:WxH]"
+// line, so there is no table: deleting the comment (or the event) deletes the file.
+
+const COMMENT_IMAGE_TYPES = ["image/jpeg", "image/webp", "image/gif"];
+const COMMENT_IMAGE_MAX_BYTES = { "image/gif": 4_000_000, default: 2_000_000 };
+const commentImageKey = (eventId: string, id: string) => `${eventId}/c/${id}`;
+
+function commentImageIds(body: string): string[] {
+  return [...body.matchAll(/^\[img:([A-Za-z0-9_-]{8,40}):\d+x\d+\]$/gm)].map((m) => m[1]);
+}
+
+// Upload one picture (raw bytes, Content-Type image/jpeg|webp|gif). Returns its id.
+app.post("/parties/:id/comment-images", async (c) => {
+  const event = await getEvent(c.env.DB, c.req.param("id"));
+  const me = await requireGuest(c, event.id);
+  const bucket = requireBucket(c.env);
+  const mime = (c.req.header("Content-Type") ?? "").split(";")[0].trim();
+  if (!COMMENT_IMAGE_TYPES.includes(mime)) throw new HttpError(415, "Format non pris en charge (photo ou GIF)");
+  const bytes = new Uint8Array(await c.req.arrayBuffer());
+  const max = mime === "image/gif" ? COMMENT_IMAGE_MAX_BYTES["image/gif"] : COMMENT_IMAGE_MAX_BYTES.default;
+  if (bytes.byteLength === 0) throw new HttpError(400, "Image vide");
+  if (bytes.byteLength > max) throw new HttpError(413, `Image trop lourde (${Math.round(max / 1_000_000)} Mo max)`);
+  const ok = mime === "image/gif" ? String.fromCharCode(...bytes.slice(0, 4)) === "GIF8" : looksLikeImage(bytes, mime);
+  if (!ok) throw new HttpError(415, "Ce fichier n'est pas une image");
+  const id = randomId(12);
+  await bucket.put(commentImageKey(event.id, id), bytes, {
+    httpMetadata: { contentType: mime },
+    customMetadata: { guest: me.id },
+  });
+  return c.json({ id }, 201);
+});
+
+// The picture itself, usable from an <img> tag (random ids, like album photos).
+app.get("/parties/:id/comment-images/:imageId", async (c) => {
+  const imageId = c.req.param("imageId");
+  if (!/^[A-Za-z0-9_-]{8,40}$/.test(imageId)) throw new HttpError(404, "Image introuvable");
+  const obj = await requireBucket(c.env).get(commentImageKey(c.req.param("id"), imageId));
+  if (!obj) throw new HttpError(404, "Image introuvable");
+  return new Response(obj.body, {
+    headers: {
+      "Content-Type": obj.httpMetadata?.contentType || "image/jpeg",
+      "Cache-Control": "private, max-age=31536000, immutable",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
 });
 
 // Authors delete their own photos; hosts delete any.
