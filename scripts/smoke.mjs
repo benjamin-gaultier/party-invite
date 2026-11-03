@@ -75,6 +75,13 @@ await call(`/parties/${eventId}/comments/${target.id}/like`, { method: "PUT", bo
 check("liking twice counts once", (await call(`/parties/${eventId}/comments`, { token: host.token })).data.comments.find((c) => c.id === target.id).likes.length === 1);
 const unliked = await call(`/parties/${eventId}/comments/${target.id}/like`, { method: "PUT", body: { liked: false }, token: guest.token });
 check("guest unlikes", unliked.data.comments.find((c) => c.id === target.id).likes.length === 0);
+const reacted = await call(`/parties/${eventId}/comments/${target.id}/like`, { method: "PUT", body: { liked: true, emoji: "😂" }, token: guest.token });
+check("guest reacts with an emoji", reacted.data.comments.find((c) => c.id === target.id).likes[0]?.emoji === "😂");
+const switched = await call(`/parties/${eventId}/comments/${target.id}/like`, { method: "PUT", body: { liked: true, emoji: "🇫🇷" }, token: guest.token });
+const sw = switched.data.comments.find((c) => c.id === target.id).likes;
+check("new reaction replaces the old one", sw.length === 1 && sw[0].emoji === "🇫🇷");
+check("default reaction is a heart", (await call(`/parties/${eventId}/comments/${target.id}/like`, { method: "PUT", body: { liked: true }, token: host.token })).data.comments.find((c) => c.id === target.id).likes.some((l) => l.name === "Host" && l.emoji === "❤️"));
+check("non-emoji reaction rejected", (await call(`/parties/${eventId}/comments/${target.id}/like`, { method: "PUT", body: { liked: true, emoji: "<b>x" }, token: guest.token })).status === 400);
 check("like unknown comment -> 404", (await call(`/parties/${eventId}/comments/nope/like`, { method: "PUT", body: { liked: true }, token: guest.token })).status === 404);
 check("like needs a token", (await call(`/parties/${eventId}/comments/${target.id}/like`, { method: "PUT", body: { liked: true } })).status === 401);
 

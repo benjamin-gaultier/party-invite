@@ -933,6 +933,8 @@ const EMOJIS = [
   "😴", "🤔", "🙈", "😱", "💯", "🫶",
 ];
 
+const QUICK_REACTIONS = ["❤️", "😂", "😮", "😢", "🙏", "🔥", "🎉", "👍"];
+
 const GIF_LINE = /^\[gif:([A-Za-z0-9]+)\]$/;
 const gifUrl = (id) => `https://media.giphy.com/media/${id}/200w.webp`;
 const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1003,7 +1005,7 @@ function setupComments(eventId, me, initial, token, guests) {
     for (const c of comments) {
       if (c.guestId === me.id) {
         for (const l of c.likes || []) {
-          if (l.guestId !== me.id) list.push({ kind: "like", from: l.name, at: l.at, id: c.id, text: snippet(c.body) });
+          if (l.guestId !== me.id) list.push({ kind: "like", emoji: l.emoji || "❤️", from: l.name, at: l.at, id: c.id, text: snippet(c.body) });
         }
       } else if (mentionsMe(parseComment(c.body).text, me.name)) {
         list.push({ kind: "mention", from: c.name, at: c.createdAt, id: c.id, text: snippet(c.body) });
@@ -1022,7 +1024,7 @@ function setupComments(eventId, me, initial, token, guests) {
     if (!panel.hidden) drawPanel(seen);
   }
 
-  const notifText = (n) => (n.kind === "like" ? `❤️ ${n.from} a aimé votre commentaire` : `💬 ${n.from} vous a tagué·e`);
+  const notifText = (n) => (n.kind === "like" ? `${n.emoji} ${n.from} a réagi à votre commentaire` : `💬 ${n.from} vous a tagué·e`);
 
   function drawPanel(seen) {
     panel.innerHTML = `<h2>Notifications</h2>${
@@ -1031,7 +1033,7 @@ function setupComments(eventId, me, initial, token, guests) {
             .map(
               (n) => `<li class="${n.at > seen ? "unread" : ""}"><button data-goto="${esc(n.id)}">
                 ${avatar(n.from, "sm")}
-                <span class="notif-text"><span><strong>${esc(n.from)}</strong> ${n.kind === "like" ? "a aimé votre commentaire" : "vous a tagué·e"}${n.text ? ` : « ${esc(n.text)} »` : ""}</span>
+                <span class="notif-text"><span><strong>${esc(n.from)}</strong> ${n.kind === "like" ? `a réagi ${esc(n.emoji)} à votre commentaire` : "vous a tagué·e"}${n.text ? ` : « ${esc(n.text)} »` : ""}</span>
                 <span class="muted small">${esc(formatAgo(n.at))}</span></span>
               </button></li>`,
             )
@@ -1066,7 +1068,7 @@ function setupComments(eventId, me, initial, token, guests) {
   const draw = (comments) => {
     for (const c of comments) people.set(c.guestId, c.name);
     updateNotifications(comments);
-    const key = comments.map((c) => c.id + c.name + (c.likes || []).map((l) => l.guestId).join("+")).join();
+    const key = comments.map((c) => c.id + c.name + (c.likes || []).map((l) => l.guestId + l.emoji).join("+")).join();
     if (key === lastKey) {
       // Same comments: just refresh the "x min ago" labels.
       for (const el of list.querySelectorAll("[data-at]")) el.textContent = formatAgo(el.dataset.at);
@@ -1082,8 +1084,10 @@ function setupComments(eventId, me, initial, token, guests) {
             const mine = c.guestId === me.id;
             const tagged = !mine && mentionsMe(text, me.name);
             const likes = c.likes || [];
-            const liked = likes.some((l) => l.guestId === me.id);
-            const likers = likes.map((l) => (l.guestId === me.id ? "Vous" : l.name)).join(", ");
+            const myEmoji = likes.find((l) => l.guestId === me.id)?.emoji || "";
+            const groups = new Map();
+            for (const l of likes) groups.set(l.emoji || "❤️", [...(groups.get(l.emoji || "❤️") || []), l.guestId === me.id ? "Vous" : l.name]);
+            const likers = likes.map((l) => `${l.guestId === me.id ? "Vous" : l.name} ${l.emoji || "❤️"}`).join(", ");
             return `<li id="c-${esc(c.id)}" class="${mine ? "mine" : ""} ${tagged ? "tagged" : ""}">
               ${avatar(c.name)}
               <div class="comment-body">
@@ -1097,8 +1101,19 @@ function setupComments(eventId, me, initial, token, guests) {
                 ${text ? `<p>${formatCommentText(text, names, me.name)}</p>` : ""}
                 ${gifs.map((id) => `<img class="comment-gif" src="${gifUrl(id)}" alt="GIF" loading="lazy">`).join("")}
                 <div class="comment-foot">
-                  <button class="like ${liked ? "on" : ""}" data-like="${esc(c.id)}" aria-pressed="${liked}" aria-label="${liked ? "Je n'aime plus" : "J'aime"}">${liked ? "❤️" : "🤍"}${likes.length ? ` <span>${likes.length}</span>` : ""}</button>
-                  ${likes.length ? `<span class="muted small likers">${esc(likers)}</span>` : ""}
+                  ${[...groups]
+                    .map(
+                      ([e, names]) =>
+                        `<button class="reaction ${e === myEmoji ? "on" : ""}" data-react="${esc(c.id)}" data-emoji="${esc(e)}" aria-pressed="${e === myEmoji}" title="${esc(names.join(", "))}">${esc(e)} <span>${names.length}</span></button>`,
+                    )
+                    .join("")}
+                  <button class="reaction add" data-react-open="${esc(c.id)}" aria-label="Réagir" title="Réagir">${likes.length ? "＋" : "😊＋"}</button>
+                </div>
+                ${likes.length ? `<p class="muted small likers">${esc(likers)}</p>` : ""}
+                <div class="react-bar" data-bar="${esc(c.id)}" hidden>
+                  ${QUICK_REACTIONS.map((e) => `<button type="button" data-react="${esc(c.id)}" data-emoji="${e}" class="${e === myEmoji ? "on" : ""}">${e}</button>`).join("")}
+                  <button type="button" class="more" data-react-more aria-label="Plus d'emojis">⋯</button>
+                  <div class="react-more" hidden>${EMOJIS.filter((e) => !QUICK_REACTIONS.includes(e)).map((e) => `<button type="button" data-react="${esc(c.id)}" data-emoji="${e}" class="${e === myEmoji ? "on" : ""}">${e}</button>`).join("")}</div>
                 </div>
               </div></li>`;
           })
@@ -1157,11 +1172,23 @@ function setupComments(eventId, me, initial, token, guests) {
   list.addEventListener("click", async (ev) => {
     const replyBtn = ev.target.closest("[data-reply]");
     if (replyBtn) return reply(replyBtn.dataset.reply);
-    const likeBtn = ev.target.closest("[data-like]");
-    if (likeBtn) {
-      const liked = likeBtn.getAttribute("aria-pressed") !== "true";
-      return withBusy(likeBtn, async () => {
-        draw((await api(`/parties/${eventId}/comments/${likeBtn.dataset.like}/like`, { method: "PUT", body: { liked }, token })).comments);
+    const openBtn = ev.target.closest("[data-react-open]");
+    if (openBtn) return toggleBar(openBtn.dataset.reactOpen);
+    const moreBtn = ev.target.closest("[data-react-more]");
+    if (moreBtn) {
+      moreBtn.hidden = true;
+      moreBtn.nextElementSibling.hidden = false;
+      return;
+    }
+    const reactBtn = ev.target.closest("[data-react]");
+    if (reactBtn) {
+      // Tapping your own reaction again removes it; any other emoji replaces it.
+      const commentId = reactBtn.dataset.react;
+      const emoji = reactBtn.dataset.emoji;
+      const mine = list.querySelector(`li[id="c-${CSS.escape(commentId)}"] .reaction.on`)?.dataset.emoji;
+      const body = mine === emoji ? { liked: false } : { liked: true, emoji };
+      return withBusy(reactBtn, async () => {
+        draw((await api(`/parties/${eventId}/comments/${commentId}/like`, { method: "PUT", body, token })).comments);
       });
     }
     const btn = ev.target.closest("[data-delete]");
@@ -1169,6 +1196,33 @@ function setupComments(eventId, me, initial, token, guests) {
     withBusy(btn, async () => {
       draw((await api(`/parties/${eventId}/comments/${btn.dataset.delete}`, { method: "DELETE", token })).comments);
     });
+  });
+
+  function toggleBar(commentId, open) {
+    for (const bar of list.querySelectorAll("[data-bar]")) {
+      const show = bar.dataset.bar === commentId && (open ?? bar.hidden);
+      bar.hidden = !show;
+    }
+  }
+
+  // Long-press a comment (like WhatsApp) to open its reaction bar.
+  let pressTimer = null;
+  list.addEventListener("pointerdown", (ev) => {
+    const li = ev.target.closest("li[id^='c-']");
+    if (!li || ev.target.closest("button, a, .react-bar")) return;
+    pressTimer = setTimeout(() => {
+      toggleBar(li.id.slice(2), true);
+      navigator.vibrate?.(10);
+    }, 450);
+  });
+  for (const type of ["pointerup", "pointercancel", "pointermove", "scroll"]) {
+    list.addEventListener(type, (ev) => {
+      if (type === "pointermove" && Math.abs(ev.movementX) + Math.abs(ev.movementY) < 3) return;
+      clearTimeout(pressTimer);
+    });
+  }
+  list.addEventListener("contextmenu", (ev) => {
+    if (ev.target.closest("li[id^='c-']") && !ev.target.closest("a, img")) ev.preventDefault();
   });
 
   // ----- @mention suggestions -----
