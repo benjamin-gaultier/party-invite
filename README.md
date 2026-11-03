@@ -14,8 +14,7 @@ guests add songs to the host's Spotify playlist from the app (no Spotify account
 host can remove a guest or merge a duplicate guest into the original (comments, reactions, songs and RSVP move over; the duplicate's link keeps opening the original via `guest_aliases`),
 app in French, host-chosen colors and background picture via floating organizer-only buttons (resized in the browser, stored in D1).
 
-**Next:** shared checklist/notes, link previews and polish,
-photos later.
+**Next:** shared checklist/notes, link previews and polish.
 
 ## Stack
 
@@ -120,3 +119,24 @@ migrations and then deploys.
 | DELETE | `/api/parties/:id/spotify` | host | Disconnect Spotify |
 | GET | `/api/parties/:id/spotify/search?q=` | guest | `{tracks}` (10 max) |
 | POST | `/api/parties/:id/spotify/songs` | guest | `{trackId}` → adds to the playlist, `{songs}` |
+
+## Photo album
+
+The event page has a 📸 Photos card, separate from the comments. Guests pick several photos
+at once; the browser shrinks each to about 1600px JPEG (which also strips EXIF data such as
+GPS position) plus a 480px thumbnail, and sends them one by one. Tapping a photo opens a
+full-screen viewer (swipe or arrows) showing who posted it, with Enregistrer (download) and
+Supprimer (the author, or any host). A host can tick "Ouvrir l'album aux invités seulement le
+jour de la fête": guests can then add photos from the event date on (Paris time), hosts always.
+
+Files live in R2 (binding `PHOTOS`) under `<event id>/<photo id>` and `<event id>/<photo id>.thumb`;
+table `photos` (migration 0009) says who posted what, and `events.photos_party_day` holds the
+setting. Images are served by `GET /api/parties/:id/photos/:photoId[?thumb=1|?download=1]`
+without the guest token (like the background picture: both ids are random). Removing a guest
+or deleting the event also deletes their files; merging a duplicate moves their photos.
+Limits: 2 MB per photo, 100 photos per guest per hour, 1000 per event.
+
+Setup (once): enable R2 in the Cloudflare dashboard (R2 Object Storage, free tier covers 10 GB),
+create buckets `party-invite-photos` and `party-invite-photos-preview`, apply migration 0009.
+Until the bucket binding and migration are there, the card only shows a note to hosts.
+Local check: `npm run dev`, then `npm run smoke:photos`.
