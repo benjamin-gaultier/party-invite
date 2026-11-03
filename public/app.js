@@ -1235,7 +1235,7 @@ function setupComments(eventId, me, initial, token, guests) {
     return [...new Set(people.values())]
       .filter((n) => n !== me.name && n.toLowerCase().includes(q))
       .sort((a, b) => b.toLowerCase().startsWith(q) - a.toLowerCase().startsWith(q) || a.localeCompare(b))
-      .slice(0, 6);
+      .slice(0, 8);
   };
 
   function updateMentions() {
@@ -1272,8 +1272,15 @@ function setupComments(eventId, me, initial, token, guests) {
     updateMentions();
   });
   textarea.addEventListener("click", updateMentions);
-  textarea.addEventListener("blur", () => setTimeout(() => (mentionList.hidden = true), 150));
-  document.getElementById("mention-open").addEventListener("click", () => {
+  // Hide suggestions when focus really leaves the text box (the @ button hands focus straight back).
+  textarea.addEventListener("blur", () =>
+    setTimeout(() => {
+      if (document.activeElement !== textarea) mentionList.hidden = true;
+    }, 150),
+  );
+  const mentionBtn = document.getElementById("mention-open");
+  mentionBtn.addEventListener("mousedown", (ev) => ev.preventDefault()); // keep the keyboard open
+  mentionBtn.addEventListener("click", () => {
     const before = textarea.value.slice(0, textarea.selectionStart ?? textarea.value.length);
     insert(before && !/\s$/.test(before) ? " @" : "@");
   });
