@@ -40,7 +40,7 @@ type GuestRow = {
   created_at: string;
 };
 type Rsvp = "going" | "maybe" | "not_going";
-type CommentRow = { id: string; guest_id: string; name: string; body: string; created_at: string };
+type CommentRow = { id: string; guest_id: string; name: string; body: string; created_at: string; edited_at?: string };
 
 const RSVPS: Rsvp[] = ["going", "maybe", "not_going"];
 const LIMITS = { title: 120, description: 2000, address: 300, name: 40, theme: 200, url: 500, note: 300, comment: 1000 };
@@ -186,8 +186,8 @@ async function insertGuest(db: D1Database, eventId: string, name: string, isHost
 
 type Like = { guestId: string; name: string; at: string; emoji: string };
 
-function publicComment(c: CommentRow, likes: Like[] = []) {
-  return { id: c.id, guestId: c.guest_id, name: c.name, body: c.body, createdAt: c.created_at, likes };
+function publicComment(c: CommentRow, likes: Like[] = [], pinned = false) {
+  return { id: c.id, guestId: c.guest_id, name: c.name, body: c.body, createdAt: c.created_at, editedAt: c.edited_at || "", pinned, likes };
 }
 
 // Who liked which comment of an event, oldest first. Returns nothing if the
@@ -218,18 +218,29 @@ async function listLikes(db: D1Database, eventId: string): Promise<Map<string, L
 
 // Latest comments, oldest first. Names come from the guests table so renames show up.
 async function listComments(db: D1Database, eventId: string) {
-  const { results } = await db
-    .prepare(
-      `SELECT * FROM (
-         SELECT c.id, c.guest_id, g.name, c.body, c.created_at, c.rowid AS seq
-         FROM comments c JOIN guests g ON g.id = c.guest_id
-         WHERE c.event_id = ? ORDER BY c.rowid DESC LIMIT 200
-       ) ORDER BY seq`,
-    )
-    .bind(eventId)
-    .all<CommentRow>();
+  // edited_at and pinned_comment_id come with migration 0010; work without them too.
+  const query = (cols: string) =>
+    db
+      .prepare(
+        `SELECT * FROM (
+           SELECT c.id, c.guest_id, g.name, c.body, c.created_at${cols}, c.rowid AS seq
+           FROM comments c JOIN guests g ON g.id = c.guest_id
+           WHERE c.event_id = ? ORDER BY c.rowid DESC LIMIT 200
+         ) ORDER BY seq`,
+      )
+      .bind(eventId)
+      .all<CommentRow>();
+  let results: CommentRow[];
+  let pinnedId = "";
+  try {
+    results = (await query(", c.edited_at")).results;
+    pinnedId = (await db.prepare("SELECT pinned_comment_id FROM events WHERE id = ?").bind(eventId).first<{ pinned_comment_id: string }>())?.pinned_comment_id || "";
+  } catch (err) {
+    if (!/no such column/.test(String(err))) throw err;
+    results = (await query("")).results;
+  }
   const likes = await listLikes(db, eventId);
-  return results.map((c) => publicComment(c, likes.get(c.id)));
+  return results.map((c) => publicComment(c, likes.get(c.id), c.id === pinnedId));
 }
 
 function publicGuest(g: GuestRow) {
@@ -573,6 +584,44 @@ app.get("/parties/:id/gifs", async (c) => {
     if (cache) c.executionCtx.waitUntil(cache.put(cacheKey, res.clone()));
   }
   return new Response(res.body, { headers: { "Content-Type": "application/json" } });
+});
+
+// Authors edit their own comments ({ body }). The app keeps the reply/GIF/picture lines.
+app.patch("/parties/:id/comments/:commentId", async (c) => {
+  const event = await getEvent(c.env.DB, c.req.param("id"));
+  const me = await requireGuest(c, event.id);
+  const commentId = c.req.param("commentId");
+  const row = await c.env.DB.prepare("SELECT guest_id, body FROM comments WHERE id = ? AND event_id = ?")
+    .bind(commentId, event.id)
+    .first<{ guest_id: string; body: string }>();
+  if (!row) throw new HttpError(404, "Commentaire introuvable");
+  if (row.guest_id !== me.id) throw new HttpError(403, "Vous ne pouvez modifier que vos propres commentaires");
+  const text = str((await body(c)).body, "body", LIMITS.comment, true);
+  // Pictures dropped from the comment are deleted from storage.
+  const kept = new Set(commentImageIds(text));
+  const dropped = commentImageIds(row.body).filter((id) => !kept.has(id));
+  if (dropped.length && c.env.PHOTOS) c.executionCtx.waitUntil(c.env.PHOTOS.delete(dropped.map((id) => commentImageKey(event.id, id))));
+  await c.env.DB.prepare("UPDATE comments SET body = ?, edited_at = datetime('now') WHERE id = ?").bind(text, commentId).run();
+  return c.json({ comments: await listComments(c.env.DB, event.id) });
+});
+
+// Hosts pin one comment to the top of the wall ({ pinned: true | false }).
+app.put("/parties/:id/comments/:commentId/pin", async (c) => {
+  const event = await getEvent(c.env.DB, c.req.param("id"));
+  const me = await requireGuest(c, event.id);
+  if (me.is_host !== 1) throw new HttpError(403, "Seul l'hôte peut épingler un message");
+  const commentId = c.req.param("commentId");
+  const exists = await c.env.DB.prepare("SELECT id FROM comments WHERE id = ? AND event_id = ?").bind(commentId, event.id).first();
+  if (!exists) throw new HttpError(404, "Commentaire introuvable");
+  const pinned = (await body(c)).pinned !== false;
+  await c.env.DB.prepare(
+    pinned
+      ? "UPDATE events SET pinned_comment_id = ?1, updated_at = datetime('now') WHERE id = ?2"
+      : "UPDATE events SET pinned_comment_id = '', updated_at = datetime('now') WHERE id = ?2 AND pinned_comment_id = ?1",
+  )
+    .bind(commentId, event.id)
+    .run();
+  return c.json({ comments: await listComments(c.env.DB, event.id) });
 });
 
 // Authors can delete their own comments; the host can delete any.
