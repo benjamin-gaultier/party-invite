@@ -491,3 +491,4 @@ button.link.remove-guest { color: #e5484d; margin-top: 18px; }
 .reply-label { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .reply-label .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .reply-bar .link { text-decoration: none; font-size: 1rem; color: var(--muted); }
+[data-live="songs"]:empty { display: none; }

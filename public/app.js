@@ -554,14 +554,33 @@ function renderJoin(eventId, preview) {
 const RSVP_LABELS = { going: "Je viens", maybe: "Peut-être", not_going: "Je ne peux pas" };
 const RSVP_EMOJI = { going: "🥳", maybe: "🤔", not_going: "😢" };
 
+// Marks a rendered block so live updates can swap it on its own (see patchSpace).
+function live(key, html) {
+  return html ? html.replace(/^(\s*<[a-z]+)/, `$1 data-live="${key}"`) : "";
+}
+
 function renderSpace(eventId, data) {
-  const { event, me, guests } = data;
+  const { event, me } = data;
   setBackground(eventId, event.background_version);
   applyColor(event.color);
   const identity = getIdentity(eventId);
+  // Re-rendering (after an RSVP, a live update…) must not lose what is being typed.
+  const draft = space?.eventId === eventId ? captureDraft() : null;
   // Keep the local copy fresh for "Your events".
   setIdentity(eventId, { name: me.name, title: event.title, date: event.date, time: event.time, isHost: me.isHost, justCreated: false });
   document.title = `${event.title} · Party Invite`;
+  const html = spaceHtml(eventId, data, identity);
+  app.innerHTML = html;
+  const comments = setupComments(eventId, me, data.comments || [], identity.token, data.guests || []);
+  space = { eventId, data, token: identity.token, parts: liveParts(html), comments, list: document.getElementById("comments") };
+  for (const key of space.parts.keys()) bindLive(key);
+  bindFrame();
+  if (draft) restoreDraft(draft);
+  startLiveUpdates();
+}
+
+function spaceHtml(eventId, data, identity) {
+  const { event, me, guests } = data;
 
   const groups = { going: [], maybe: [], not_going: [], none: [] };
   for (const g of guests) groups[g.rsvp || "none"].push(g);
@@ -580,17 +599,17 @@ function renderSpace(eventId, data) {
            .join("")}</ul></div>`
       : "";
 
-  app.innerHTML = `
+  return `
     <nav class="topbar"><a href="/mes-evenements">← Mes événements</a><span class="topbar-right"><span class="hello">${avatar(me.name, "sm")} Salut ${esc(me.name)} 👋</span><button class="bell" id="bell" aria-expanded="false" aria-label="Notifications">🔔<span class="bell-count" id="bell-count" hidden></span></button></span></nav>
     <div class="notif-panel card" id="notif-panel" hidden></div>
 
-    ${eventHero(
+    ${live("hero", eventHero(
       eventId,
       event,
       groups.going.length
         ? `<p class="hero-going">${faces(groups.going)} <span>${groups.going.length} ${groups.going.length > 1 ? "viennent" : "vient"}</span></p>`
         : "",
-    )}
+    ))}
 
     ${
       me.isHost
@@ -611,7 +630,7 @@ function renderSpace(eventId, data) {
 
     ${
       event.address || event.description || me.isHost
-        ? `<section class="card event-info">
+        ? `<section data-live="info" class="card event-info">
             ${event.address ? `<p class="address">📍 <a href="${mapsUrl(event.address)}" target="_blank" rel="noopener">${esc(event.address)}</a></p>` : ""}
             ${event.description ? `<p class="description">${esc(event.description)}</p>` : ""}
             ${me.isHost ? `<button class="link" id="edit">✏️ Modifier les détails</button>` : ""}
@@ -619,7 +638,7 @@ function renderSpace(eventId, data) {
         : ""
     }
 
-    <section class="card">
+    <section data-live="rsvp" class="card">
       <h2>Vous venez ?</h2>
       <div class="rsvp">
         ${Object.entries(RSVP_LABELS)
@@ -631,7 +650,7 @@ function renderSpace(eventId, data) {
       </div>
     </section>
 
-    <section class="card">
+    <section data-live="guests" class="card">
       <h2>Invités <span class="count">${guests.length}</span></h2>
       ${guestList("going", "Viennent")}
       ${guestList("maybe", "Peut-être")}
@@ -640,7 +659,7 @@ function renderSpace(eventId, data) {
       ${me.isHost && guests.length > 1 ? `<p class="muted small">👑 Touchez un invité pour en faire un co-hôte, ou pour retirer un doublon.</p>` : ""}
     </section>
 
-    ${musicSection(event, me, data.spotify)}
+    ${live("music", musicSection(event, me, data.spotify))}
 
     <section class="card">
       <h2>💬 Commentaires</h2>
@@ -708,29 +727,50 @@ function renderSpace(eventId, data) {
         : ""
     }
   `;
+}
 
-  setupComments(eventId, me, data.comments || [], identity.token, data.guests || []);
-  setupMusic(eventId, data, identity.token);
-  if (me.isHost) setupBackgroundControl(eventId, identity.token);
-  for (const btn of app.querySelectorAll("[data-host-toggle]")) {
-    btn.addEventListener("click", () => guestMenu(eventId, guests, guests.find((g) => g.id === btn.dataset.hostToggle), identity.token));
+// Wires up one live block. Called again whenever patchSpace swaps that block.
+// Handlers read space.data so they always see the latest event.
+function bindLive(key) {
+  const { eventId, token } = space;
+  const el = app.querySelector(`[data-live="${key}"]`);
+  if (!el) return;
+  if (key === "music") setupMusic(eventId, space.data, token);
+  if (key === "info") el.querySelector("#edit")?.addEventListener("click", () => renderEdit(eventId, space.data));
+  if (key === "guests") {
+    for (const btn of el.querySelectorAll("[data-host-toggle]")) {
+      btn.addEventListener("click", () => {
+        const { guests } = space.data;
+        const guest = guests.find((g) => g.id === btn.dataset.hostToggle);
+        if (guest) guestMenu(eventId, guests, guest, token);
+      });
+    }
   }
+  if (key === "rsvp") {
+    for (const btn of el.querySelectorAll("[data-rsvp]")) {
+      btn.addEventListener("click", () =>
+        withBusy(btn, async () => {
+          const before = space.data.me.rsvp;
+          const next = await api(`/parties/${eventId}/rsvp`, { method: "PUT", body: { status: btn.dataset.rsvp }, token });
+          if (btn.dataset.rsvp === "going" && before !== "going") confetti(btn);
+          renderSpace(eventId, next);
+        }),
+      );
+    }
+  }
+}
 
-  for (const btn of app.querySelectorAll("[data-rsvp]")) {
-    btn.addEventListener("click", () =>
-      withBusy(btn, async () => {
-        const next = await api(`/parties/${eventId}/rsvp`, { method: "PUT", body: { status: btn.dataset.rsvp }, token: identity.token });
-        if (btn.dataset.rsvp === "going" && me.rsvp !== "going") confetti(btn);
-        renderSpace(eventId, next);
-      }),
-    );
-  }
+// Everything outside the live blocks: share box, comment box, host controls…
+function bindFrame() {
+  const { eventId, data, token } = space;
+  const { event, me } = data;
+  if (me.isHost) setupBackgroundControl(eventId, token);
 
   document.getElementById("rename").addEventListener("click", async () => {
     const name = prompt("Votre prénom", me.name)?.trim();
     if (!name || name === me.name) return;
     try {
-      renderSpace(eventId, await api(`/parties/${eventId}/me`, { method: "PATCH", body: { name }, token: identity.token }));
+      renderSpace(eventId, await api(`/parties/${eventId}/me`, { method: "PATCH", body: { name }, token }));
     } catch (err) {
       toast(err.message);
     }
@@ -753,7 +793,6 @@ function renderSpace(eventId, data) {
         navigator.share({ title: event.title, text: `${event.title} 🎉`, url: shareUrl(eventId) }).catch(() => {}),
       );
     }
-    document.getElementById("edit").addEventListener("click", () => renderEdit(eventId, data));
   }
 }
 
@@ -859,12 +898,12 @@ function musicSection(event, me, spotify = {}) {
           : ""
       }
       ${event.playlist_url ? `<a class="btn spotify-btn" href="${esc(event.playlist_url)}" target="_blank" rel="noopener">${musicLabel(event.playlist_url)}</a>` : ""}
-      ${
+      <div data-live="songs">${
         songs.length
           ? `<h3>Ajoutées par les invités <span class="count">${songs.length}</span></h3>
              <ul class="tracks">${songs.map((t) => trackItem(t, `par ${esc(t.addedBy)}`)).join("")}</ul>`
           : ""
-      }
+      }</div>
       ${hostControls}
     </section>`;
 }
@@ -918,7 +957,8 @@ function setupMusic(eventId, data, token) {
   if (!form) return;
   const input = form.querySelector("input");
   const results = document.getElementById("song-results");
-  const added = new Set((spotify.songs || []).map((t) => t.trackId));
+  // Read at search time: live updates can bring in songs others just added.
+  const isAdded = (id) => ((space?.eventId === eventId ? space.data : data).spotify?.songs || []).some((t) => t.trackId === id);
   let timer;
   let seq = 0;
 
@@ -937,7 +977,7 @@ function setupMusic(eventId, data, token) {
             .map((t) =>
               trackItem(
                 t,
-                added.has(t.trackId)
+                isAdded(t.trackId)
                   ? `<span class="muted small">Déjà ajoutée</span>`
                   : `<button class="add-song" data-track="${esc(t.trackId)}">Ajouter</button>`,
               ),
@@ -970,15 +1010,149 @@ function setupMusic(eventId, data, token) {
   });
 }
 
-// ---------- comment wall ----------
-// Not realtime: we refresh every few seconds while the event page is open.
+// ---------- live updates ----------
+// While an event page is open we re-fetch it every few seconds (and as soon as the tab
+// comes back), then only swap the blocks that changed: comments, RSVPs, guests, songs…
+// Polling keeps it simple: D1 reads are cheap and nothing needs a socket to stay open.
 
-let commentsTimer = null;
+const LIVE_EVERY = 8000;
+let space = null; // the event page on screen: { eventId, data, token, parts, comments, list }
+let liveTimer = null;
+let liveBusy = false;
 
-function stopCommentsPolling() {
-  clearInterval(commentsTimer);
-  commentsTimer = null;
+function stopLiveUpdates() {
+  clearInterval(liveTimer);
+  liveTimer = null;
 }
+
+function startLiveUpdates() {
+  stopLiveUpdates();
+  liveTimer = setInterval(liveTick, LIVE_EVERY);
+}
+
+const liveOnScreen = () => space && document.body.contains(space.list);
+
+async function liveTick() {
+  if (!liveOnScreen() || document.hidden || liveBusy) return;
+  liveBusy = true;
+  const { eventId, token } = space;
+  try {
+    const data = await api(`/parties/${eventId}`, { token });
+    if (!liveOnScreen() || space.eventId !== eventId) return;
+    if (data.preview) return renderEvent(eventId); // we were removed from the guest list
+    space.comments.update(data.comments || [], data.guests || []);
+    patchSpace(data);
+  } catch (err) {
+    // Event deleted by the host: say so. Otherwise (offline…) try again next tick.
+    if (err.status === 404) renderEvent(eventId);
+  } finally {
+    liveBusy = false;
+  }
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) liveTick();
+});
+window.addEventListener("online", () => liveTick());
+
+// The HTML of each live block, with nested live blocks left out, plus the HTML of the
+// rest of the page ("frame"). Comparing these strings tells us exactly what changed.
+function liveParts(html) {
+  const tpl = document.createElement("template");
+  tpl.innerHTML = html;
+  const parts = new Map();
+  for (const el of tpl.content.querySelectorAll("[data-live]")) {
+    const own = el.cloneNode(true);
+    for (const inner of own.querySelectorAll("[data-live]")) inner.replaceWith(`[${inner.dataset.live}]`);
+    parts.set(el.dataset.live, { el, html: own.outerHTML });
+  }
+  const frame = tpl.content.cloneNode(true);
+  for (const el of frame.querySelectorAll("[data-live]")) el.replaceWith(`[${el.dataset.live}]`);
+  const div = document.createElement("div");
+  div.append(frame);
+  parts.set("", { html: div.innerHTML });
+  return parts;
+}
+
+// Someone is in the middle of something here: don't pull the rug.
+function inUse(el) {
+  const a = document.activeElement;
+  if (a && a !== document.body && el.contains(a) && a.matches("input, textarea, select")) return true;
+  if ([...el.querySelectorAll("button")].some((b) => b.disabled)) return true; // request on its way
+  const search = el.querySelector("#song-search input");
+  return !!(search && search.value.trim());
+}
+
+function patchSpace(data) {
+  const { eventId } = space;
+  const identity = getIdentity(eventId);
+  if (!identity) return;
+  const html = spaceHtml(eventId, data, identity);
+  const next = liveParts(html);
+  const prev = space.parts;
+  if (next.get("").html === prev.get("").html && [...next.keys()].join() === [...prev.keys()].join()) {
+    // Same page layout: swap only the blocks that changed.
+    space.data = data;
+    setBackground(eventId, data.event.background_version);
+    applyColor(data.event.color);
+    for (const [key, part] of next) {
+      if (!key || part.html === prev.get(key).html) continue;
+      const old = app.querySelector(`[data-live="${key}"]`);
+      if (!old) continue;
+      if (inUse(old)) {
+        part.html = prev.get(key).html; // try again next tick
+        continue;
+      }
+      const fresh = part.el.cloneNode(true);
+      // Keep nested blocks that didn't change (e.g. the Spotify player while only the song list moved).
+      for (const inner of fresh.querySelectorAll("[data-live]")) {
+        const k = inner.dataset.live;
+        if (next.get(k).html === prev.get(k).html) {
+          const keep = old.querySelector(`[data-live="${k}"]`);
+          if (keep) inner.replaceWith(keep);
+        }
+      }
+      old.replaceWith(fresh);
+      bindLive(key);
+    }
+    space.parts = next;
+    return;
+  }
+  // The layout itself changed (made co-host, new address, new colors…): redraw the page,
+  // unless a menu or the color picker is open, then wait for the next tick.
+  if (document.querySelector("dialog[open]") || document.getElementById("color-picker")?.hidden === false) return;
+  const y = window.scrollY;
+  renderSpace(eventId, data);
+  window.scrollTo(0, y);
+}
+
+// What is typed in the comment box (and what it answers), so a redraw can put it back.
+function captureDraft() {
+  const textarea = document.querySelector("#comment-form textarea");
+  if (!textarea || !space?.comments) return null;
+  return {
+    value: textarea.value,
+    start: textarea.selectionStart,
+    end: textarea.selectionEnd,
+    focused: document.activeElement === textarea,
+    replyTo: space.comments.replyTo(),
+    listScroll: space.list?.scrollTop ?? null,
+  };
+}
+
+function restoreDraft(draft) {
+  const textarea = document.querySelector("#comment-form textarea");
+  if (!textarea) return;
+  textarea.value = draft.value;
+  if (draft.replyTo) space.comments.setReply(draft.replyTo);
+  if (draft.focused) {
+    textarea.focus({ preventScroll: true });
+    textarea.setSelectionRange(draft.start, draft.end);
+  }
+  if (draft.listScroll != null && space.list) space.list.scrollTop = draft.listScroll;
+}
+
+// ---------- comment wall ----------
 
 const EMOJIS = [
   "😂", "🥰", "😍", "😘", "😎", "🤩", "🥳", "😭", "🤣", "😅", "🙏", "👏",
@@ -1041,12 +1215,11 @@ function mentionsMe(text, myName) {
 }
 
 function setupComments(eventId, me, initial, token, guests) {
-  stopCommentsPolling();
   const list = document.getElementById("comments");
   const form = document.getElementById("comment-form");
   const textarea = form.querySelector("textarea");
   const sendBtn = form.querySelector("button[type=submit]");
-  let lastKey = "";
+  let lastKey = null;
   // Everyone we can tag: guests, plus authors of comments (in case someone joined since).
   const people = new Map(guests.map((g) => [g.id, g.name]));
   let currentComments = initial;
@@ -1223,15 +1396,6 @@ function setupComments(eventId, me, initial, token, guests) {
     true,
   );
 
-  const refresh = async () => {
-    if (document.hidden || !document.body.contains(list)) return;
-    try {
-      draw((await api(`/parties/${eventId}/comments`, { token })).comments);
-    } catch {
-      // Offline for a moment: try again on the next tick.
-    }
-  };
-  commentsTimer = setInterval(refresh, 8000);
 
   // ----- inserting into the text box -----
   const insert = (str, { replaceBefore = 0 } = {}) => {
@@ -1448,7 +1612,7 @@ function setupComments(eventId, me, initial, token, guests) {
     setReply(null);
     toggle(emojiBtn, emojiPanel, false);
     if (gifPanel) toggle(gifBtn, gifPanel, false);
-    lastKey = "";
+    lastKey = null;
     list.dataset.ready = "";
     draw(comments);
   };
@@ -1510,6 +1674,19 @@ function setupComments(eventId, me, initial, token, guests) {
     if (!body) return;
     withBusy(sendBtn, () => send(body));
   });
+
+  // Used by the live updates (see liveTick) and to keep a draft across redraws.
+  return {
+    update(comments, guests) {
+      for (const g of guests) people.set(g.id, g.name);
+      draw(comments);
+    },
+    replyTo: () => replyTo,
+    setReply(id) {
+      const comment = currentComments.find((c) => c.id === id);
+      if (comment) setReply(comment);
+    },
+  };
 }
 
 function renderEdit(eventId, data) {
@@ -1570,7 +1747,7 @@ function renderMessage(text) {
 // ---------- router ----------
 
 function route() {
-  stopCommentsPolling();
+  stopLiveUpdates();
   const match = location.pathname.match(/^\/e\/([A-Za-z0-9_-]+)\/?$/);
   window.scrollTo(0, 0);
   if (match) {
