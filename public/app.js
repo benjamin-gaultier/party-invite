@@ -975,7 +975,7 @@ function spaceHtml(eventId, data, identity) {
               `<button data-rsvp="${key}" class="rsvp-${key} ${me.rsvp === key ? "selected" : ""}" aria-pressed="${me.rsvp === key}" aria-label="${RSVP_LABELS[key]}">
                 <span class="rsvp-ic">${icon(RSVP_ICON[key])}</span>
                 <span class="rsvp-label">${RSVP_SHORT[key]}</span>
-                <span class="rsvp-count">${groups[key].length}</span>
+                <span class="rsvp-count">${groups[key].length ? `${groups[key].length} personne${groups[key].length > 1 ? "s" : ""}` : "Personne"}</span>
               </button>`,
           )
           .join("")}
