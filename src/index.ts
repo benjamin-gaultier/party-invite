@@ -642,7 +642,7 @@ app.delete("/parties/:id/comments/:commentId", async (c) => {
 
 // ---------- colors ----------
 // Must match COLORS in public/app.js.
-const COLORS = ["", "metro", "bleu", "vert", "rose", "rouge", "orange", "nuit", "disco", "foret"];
+const COLORS = ["", "violet", "metro", "bleu", "vert", "rose", "rouge", "orange", "nuit", "disco", "foret"];
 const HEX = /^#[0-9a-f]{6}$/i;
 
 // Must match FONTS and CARDS in public/app.js.
@@ -650,7 +650,7 @@ const FONTS = ["bricolage", "system", "playfair", "abril", "limelight", "bebas",
 const CARDS = ["hero", "info", "rsvp", "guests", "music", "photos", "comments"];
 const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
-// Per-card fonts and text colors: {"info": {"titleFont": "playfair", "title": "#rrggbb", "textFont": "...", "text": "#rrggbb"}, ...}
+// Per-card fonts, text colors and layout: {"info": {"titleFont": "playfair", "title": "#rrggbb", "textFont": "...", "text": "#rrggbb", "size": "half", "order": 0}, ...}
 function validCards(cards: unknown): boolean {
   if (!isObject(cards)) return false;
   return Object.entries(cards).every(
@@ -660,7 +660,11 @@ function validCards(cards: unknown): boolean {
       Object.entries(style).every(([prop, v]) =>
         prop === "titleFont" || prop === "textFont"
           ? typeof v === "string" && FONTS.includes(v)
-          : (prop === "title" || prop === "text") && typeof v === "string" && HEX.test(v),
+          : prop === "size"
+            ? v === "half" && key !== "hero"
+            : prop === "order"
+              ? Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 20 && key !== "hero"
+              : (prop === "title" || prop === "text") && typeof v === "string" && HEX.test(v),
       ),
   );
 }

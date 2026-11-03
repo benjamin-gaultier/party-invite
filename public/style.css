@@ -648,3 +648,131 @@ dialog.sheet::backdrop { background: rgb(0 0 0 / 0.4); }
 .sheet-item.danger { color: #e5484d; }
 .sheet-cancel { display: block; width: 100%; margin-top: 8px; padding: 12px; border-radius: 14px; border: none; background: var(--fill, var(--bg)); color: var(--muted); font: inherit; font-weight: 600; }
 .comments-hint { margin: 6px 0 0; text-align: center; }
+
+/* ---------- Nuit blanche ----------
+   Dark by default, bright accent, big rounded tiles, one typeface.
+   Host color themes still override the tokens below (set inline on body by applyColor). */
+
+:root {
+  --bg: #111014;
+  --card: #1e1c24;
+  --text: #f4f1fa;
+  --muted: #b5b0c2;
+  --border: #2c2934;
+  --fill: #2c2934;
+  --accent: #c6f432;
+  --accent-text: #111014;
+  --accent-soft: #343d1c;
+  --radius: 24px;
+  --shadow: none;
+  --display: "Bricolage Grotesque", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111014;
+    --card: #1e1c24;
+    --text: #f4f1fa;
+    --muted: #b5b0c2;
+    --border: #2c2934;
+    --accent: #c6f432;
+    --accent-text: #111014;
+    --accent-soft: #343d1c;
+    --shadow: none;
+  }
+}
+
+body { font-family: var(--display); font-size: 16px; }
+.container { gap: 10px; padding-left: 12px; padding-right: 12px; }
+h1 { font-weight: 800; letter-spacing: -0.03em; }
+h2 { font-size: 1.3rem; font-weight: 800; letter-spacing: -0.01em; }
+h3 { font-weight: 600; }
+
+/* Tiles */
+.card { border: none; border-radius: var(--radius); padding: 18px; box-shadow: none; }
+.card > * + * { margin-top: 12px; }
+body.has-bg .card { border: none; }
+fieldset { border-color: var(--border); border-radius: 18px; }
+
+/* Controls: filled, no outlines, chunky */
+input, textarea, .comment-input, .card-style-row select, .merge-row select {
+  border: none;
+  border-radius: 14px;
+  background: var(--fill, var(--bg));
+  padding: 13px 14px;
+}
+button, .btn { border: none; border-radius: 16px; background: var(--fill, var(--bg)); padding: 13px 18px; min-height: 44px; }
+.primary, .primary:hover { box-shadow: none; font-weight: 800; }
+.primary { background: var(--accent); color: var(--accent-text); }
+button.link { min-height: 0; }
+.composer-bar .tool { border-radius: 50%; }
+.composer-bar .primary { border-radius: 999px; padding: 10px 20px; }
+
+/* RSVP */
+.rsvp button { min-height: 56px; border-radius: 18px; font-size: 0.95rem; }
+.rsvp button.selected { box-shadow: none; font-weight: 800; }
+
+/* Guests and chips */
+.guests li { border: none; background: var(--fill, var(--bg)); }
+.count { background: var(--accent); color: var(--accent-text); font-weight: 800; }
+.theme-pill { background: var(--accent); color: var(--accent-text); }
+.event-link { border: none; border-radius: 20px; padding: 16px 18px; }
+.event-link strong, .event-link b { font-size: 1.05rem; }
+
+/* Hero: a solid accent tile with huge type (a photo keeps the dark overlay) */
+.event-hero { border-radius: 28px; min-height: 220px; box-shadow: none; }
+.event-hero:not(.has-photo) { background: var(--accent); color: var(--accent-text); }
+.event-hero:not(.has-photo)::after { display: none; }
+.event-hero h1 { font-size: clamp(2.6rem, 13vw, 3.6rem); line-height: 0.92; text-shadow: none; }
+.event-hero.has-photo h1 { text-shadow: 0 2px 16px rgba(0, 0, 0, 0.35); }
+.hero-inner { padding: 22px 20px 24px; gap: 10px; }
+.hero-when { font-size: 1rem; }
+.chip { background: var(--accent-text); color: var(--accent); font-weight: 800; font-size: 0.85rem; padding: 6px 12px; }
+.event-hero.has-photo .chip { background: var(--accent); color: var(--accent-text); }
+.event-hero:not(.has-photo) .hero-theme { background: color-mix(in srgb, var(--accent-text) 12%, transparent); }
+.event-hero:not(.has-photo) .faces .avatar { box-shadow: 0 0 0 2px var(--accent); }
+.event-hero:not(.has-photo) .card-edit { color: var(--accent-text); background: color-mix(in srgb, var(--accent-text) 12%, transparent); border-color: transparent; }
+body.has-bg .hero { border: none; }
+
+/* Floating host buttons and sheets */
+.bg-fab { border-radius: 999px; background: var(--card); color: var(--text); }
+.color-picker, .card-style-panel, .mention-list, .guest-menu { border: none; }
+.toast { background: var(--accent); color: var(--accent-text); font-weight: 600; }
+
+/* Chat bubbles on the dark default: lighter author names (light themes get darker ones) */
+.bubble { border: none; }
+.mine .bubble { background: var(--accent-soft); }
+.bubble .author { color: hsl(var(--hue) 75% 74%); }
+body.light-ui .bubble .author { color: hsl(var(--hue) 60% 38%); }
+
+/* Event page as a two-column grid of tiles. Cards are full width unless the host makes them
+   half width ("Aa" › Taille); applyCardStyles writes each card's order and width. */
+.container:has(> [data-card]) {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+}
+.container:has(> [data-card]) > * { grid-column: 1 / -1; min-width: 0; }
+.container:has(> [data-card]) > p.center { order: 99; }
+#app > [data-card].solo { grid-column: 1 / -1; }
+.container:has(> [data-card]) > [data-card]:not([data-card="hero"]) { container-type: inline-size; }
+.container:has(> [data-card]) > [data-card] > * + * { margin-top: 12px; }
+
+/* Narrow (half-width) tiles */
+@container (max-width: 260px) {
+  .rsvp { grid-template-columns: 1fr; }
+  .rsvp button { min-height: 48px; }
+  h2 { font-size: 1.1rem; }
+  .guests li { font-size: 0.85rem; }
+  .composer-bar { flex-wrap: wrap; }
+  .photo-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* Layout row in the "Aa" sheet */
+.card-layout-row { display: grid; grid-template-columns: 48px 1fr 44px 44px; align-items: center; gap: 8px; }
+.card-layout-row[hidden] { display: none; }
+.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border-radius: 14px; background: var(--fill, var(--bg)); }
+.seg button { min-height: 36px; padding: 6px 8px; border-radius: 10px; background: none; font-size: 0.9rem; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
+.card-layout-row .move { min-height: 44px; padding: 0; border-radius: 50%; font-size: 1.1rem; }
+.card-layout-row .move:disabled { opacity: 0.35; cursor: default; }

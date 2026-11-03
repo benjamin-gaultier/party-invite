@@ -240,7 +240,8 @@ function extraFields(event = {}) {
 // Must match COLORS in src/index.ts. "" is the default violet (follows light/dark mode).
 // Each theme sets buttons/links (accent), the page background (bg) and the cards (card).
 const COLORS = {
-  "": { name: "Violet", accent: "#7c3aed", bg: "#faf7ff", card: "#ffffff" },
+  "": { name: "Nuit blanche", accent: "#c6f432", bg: "#111014", card: "#1e1c24" },
+  violet: { name: "Violet", accent: "#7c3aed", bg: "#faf7ff", card: "#ffffff" },
   metro: { name: "Métro la nuit", accent: "#ffcd00", bg: "#0f1d38", card: "#1a2b4f" },
   bleu: { name: "Bleu RATP", accent: "#0055c8", bg: "#e6efff", card: "#ffffff" },
   vert: { name: "Vert", accent: "#00814f", bg: "#e3f5ec", card: "#ffffff" },
@@ -280,6 +281,14 @@ const CARDS = [
   ["comments", "Commentaires"],
 ];
 const CARD_PROPS = { titleFont: "font", title: "color", textFont: "font", text: "color" };
+// Cards the host can resize (half / full width) and move. The hero always stays on top.
+const LAYOUT_CARDS = CARDS.map(([k]) => k).filter((k) => k !== "hero");
+
+// The layout cards in display order: saved positions first, else the default order.
+function cardOrder(cards) {
+  const pos = (k) => cards[k]?.order ?? LAYOUT_CARDS.indexOf(k);
+  return [...LAYOUT_CARDS].sort((a, b) => pos(a) - pos(b) || LAYOUT_CARDS.indexOf(a) - LAYOUT_CARDS.indexOf(b));
+}
 
 // Keeps only known cards and valid values: {info: {titleFont, title, textFont, text}, …}.
 function cleanCards(cards) {
@@ -293,6 +302,8 @@ function cleanCards(cards) {
       const v = style[prop];
       if (kind === "font" ? Object.hasOwn(FONTS, v) : HEX.test(v || "")) clean[prop] = kind === "font" ? v : v.toLowerCase();
     }
+    if (key !== "hero" && style.size === "half") clean.size = "half";
+    if (key !== "hero" && Number.isInteger(style.order) && style.order >= 0 && style.order <= 20) clean.order = style.order;
     if (Object.keys(clean).length) out[key] = clean;
   }
   return out;
@@ -347,7 +358,11 @@ function applyCardStyles(cards) {
     document.head.append(tag);
   }
   loadFonts(Object.values(cards).flatMap((c) => [c.titleFont, c.textFont]));
-  tag.textContent = Object.entries(cards)
+  const layout = cardOrder(cards)
+    .map((key, i) => `#app > [data-card="${key}"] { order: ${i + 1};${cards[key]?.size === "half" ? " grid-column: auto;" : ""} }\n`)
+    .join("");
+  requestAnimationFrame(() => pairHalves(cards));
+  tag.textContent = layout + Object.entries(cards)
     .map(([key, c]) => {
       const sel = `[data-card="${key}"]`;
       const text = [
@@ -358,6 +373,23 @@ function applyCardStyles(cards) {
       return (text.length ? `${sel} { ${text.join("; ")}; }\n` : "") + (title.length ? `${sel} :is(h1, h2) { ${title.join("; ")}; }\n` : "");
     })
     .join("");
+}
+
+// Half-width cards sit side by side in pairs, in display order. A half card with no half
+// neighbour to pair with (say the next card is hidden for guests) spans the full width instead.
+function pairHalves(cards) {
+  const shown = cardOrder(cards)
+    .map((k) => app.querySelector(`:scope > [data-card="${k}"]`))
+    .filter(Boolean);
+  let open = null;
+  for (const el of shown) {
+    el.classList.remove("solo");
+    if (cards[el.dataset.card]?.size !== "half") {
+      open?.classList.add("solo");
+      open = null;
+    } else open = open ? null : el;
+  }
+  open?.classList.add("solo");
 }
 
 function isDark(hex) {
@@ -373,6 +405,7 @@ function applyColor(value) {
   for (const prop of COLOR_PROPS) style.removeProperty(prop);
   applyCardStyles(parseStyle(value).cards);
   const c = parseColor(value);
+  document.body.classList.toggle("light-ui", !!c && !isDark(c.card));
   if (!c) return;
   const text = isDark(c.card) ? "#f3efff" : "#1b1033";
   style.setProperty("--accent", c.accent);
@@ -452,7 +485,7 @@ function addCardButtons() {
     const name = CARDS.find(([k]) => k === el.dataset.card)?.[1] || "";
     el.insertAdjacentHTML(
       "beforeend",
-      `<button type="button" class="card-edit" data-card-edit="${el.dataset.card}" aria-label="Police et couleurs : ${esc(name)}" title="Police et couleurs">Aa</button>`,
+      `<button type="button" class="card-edit" data-card-edit="${el.dataset.card}" aria-label="Style et disposition : ${esc(name)}" title="Style et disposition">Aa</button>`,
     );
   }
 }
@@ -481,6 +514,13 @@ function setupCardStyle(eventId, token) {
       else control.value = current[prop] || shown(prop === "title" ? "h1, h2" : "");
       panel.querySelector(`[data-auto="${prop}"]`)?.toggleAttribute("hidden", !current[prop]);
     }
+    const layoutRow = panel.querySelector("#card-layout");
+    layoutRow.hidden = !LAYOUT_CARDS.includes(key);
+    for (const b of layoutRow.querySelectorAll("[data-size]")) b.setAttribute("aria-pressed", String((current.size || "") === b.dataset.size));
+    const shownOrder = cardOrder(cards).filter((k) => app.querySelector(`[data-card="${k}"]`));
+    const at = shownOrder.indexOf(key);
+    layoutRow.querySelector('[data-move="-1"]').disabled = at <= 0;
+    layoutRow.querySelector('[data-move="1"]').disabled = at < 0 || at >= shownOrder.length - 1;
   }
   const setProp = (prop, value) => {
     const next = { ...cards[key], [prop]: value };
@@ -515,6 +555,22 @@ function setupCardStyle(eventId, token) {
     control.addEventListener(control.tagName === "SELECT" ? "change" : "input", () => setProp(control.dataset.prop, control.value.toLowerCase()));
   }
   for (const btn of panel.querySelectorAll("[data-auto]")) btn.addEventListener("click", () => setProp(btn.dataset.auto, ""));
+  for (const btn of panel.querySelectorAll("[data-size]")) btn.addEventListener("click", () => setProp("size", btn.dataset.size));
+  // Swaps the card with its visible neighbour, then stores every card's position.
+  for (const btn of panel.querySelectorAll("[data-move]")) {
+    btn.addEventListener("click", () => {
+      const order = cardOrder(cards);
+      const shown = order.filter((k) => app.querySelector(`[data-card="${k}"]`));
+      const other = shown[shown.indexOf(key) + Number(btn.dataset.move)];
+      if (!other) return;
+      const i = order.indexOf(key), j = order.indexOf(other);
+      [order[i], order[j]] = [order[j], order[i]];
+      cards = Object.fromEntries([...Object.entries(cards), ...order.map((k, n) => [k, { ...cards[k], order: n }])]);
+      applyColor(withCards());
+      fill();
+      cardEl()?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+  }
   panel.querySelector("#card-reset").addEventListener("click", () => {
     const { [key]: _, ...rest } = cards;
     cards = rest;
@@ -958,6 +1014,15 @@ function spaceHtml(eventId, data, identity) {
                 </div>`,
               )
               .join("")}
+            <div class="card-layout-row" id="card-layout">
+              <span class="card-style-label">Taille</span>
+              <div class="seg" role="group" aria-label="Largeur de la carte">
+                <button type="button" data-size="">Pleine</button>
+                <button type="button" data-size="half">Moitié</button>
+              </div>
+              <button type="button" class="move" data-move="-1" aria-label="Monter la carte" title="Monter">↑</button>
+              <button type="button" class="move" data-move="1" aria-label="Descendre la carte" title="Descendre">↓</button>
+            </div>
             <div class="card-style-actions">
               <button type="button" class="link small" id="card-reset">Réinitialiser cette carte</button>
               <button class="primary" id="card-style-save">Enregistrer</button>
