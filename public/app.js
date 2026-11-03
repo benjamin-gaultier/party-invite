@@ -124,6 +124,9 @@ const ICONS = {
   image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  minus: '<path d="M5 12h14"/>',
+  userPlus: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/>',
   help: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/>',
   trash: '<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
   download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
@@ -872,6 +875,114 @@ const RSVP_ICON = { going: "check", maybe: "help", not_going: "x" };
 // Button labels answer the card's question "Vous venez ?", so they stay short and balanced.
 const RSVP_SHORT = { going: "Oui", maybe: "Peut-être", not_going: "Non" };
 
+// ---------- plus-ones ----------
+// Each guest can bring companions (g.plusOnes: one name per companion, "" = no name).
+// They only count while the guest says "Oui" or "Peut-être".
+const PLUS_ONES_CAP = 10; // the server's per-guest cap, also the host's "Sans limite"
+const PLUS_ONES_CHOICES = [[0, "Aucun"], [1, "+1"], [2, "+2"], [3, "+3"], [5, "+5"], [PLUS_ONES_CAP, "Sans limite"]];
+const comingWith = (g) => (g.rsvp === "going" || g.rsvp === "maybe" ? g.plusOnes || [] : []);
+const headcount = (list) => list.reduce((n, g) => n + 1 + comingWith(g).length, 0);
+const plural = (n, word) => `${n} ${word}${n > 1 ? "s" : ""}`;
+const andList = (parts) => (parts.length > 1 ? `${parts.slice(0, -1).join(", ")} et ${parts.at(-1)}` : parts[0] || "");
+
+// "Léa, Tom et 1 autre personne" / "2 personnes"
+function companionsText(names) {
+  const named = names.map((n) => n.trim()).filter(Boolean);
+  const unnamed = names.length - named.length;
+  if (!unnamed) return andList(named);
+  return andList([...named, named.length ? `${plural(unnamed, "autre personne")}` : plural(unnamed, "personne")]);
+}
+
+// How many companions I may bring: the host's rule, hosts themselves only the app's cap.
+const plusOnesLimit = (data) => (data.me.isHost ? PLUS_ONES_CAP : data.plusOnes?.max ?? 0);
+
+function plusOnesHtml(data) {
+  const { me } = data;
+  if (!data.plusOnes?.enabled || (me.rsvp !== "going" && me.rsvp !== "maybe")) return "";
+  const mine = me.plusOnes || [];
+  const limit = plusOnesLimit(data);
+  if (!limit && !mine.length) return "";
+  const n = mine.length;
+  const named = mine.some((x) => x.trim());
+  return `<div class="plus-ones">
+      <div class="plus-row">
+        <span class="plus-label">${icon("userPlus")}<span>${n ? `Avec ${plural(n, "personne")}` : "Avec quelqu'un&nbsp;?"}</span></span>
+        <div class="stepper" role="group" aria-label="Nombre d'accompagnants">
+          <button type="button" data-plus="-1" aria-label="Une personne de moins" ${n ? "" : "disabled"}>${icon("minus")}</button>
+          <output aria-live="polite">+${n}</output>
+          <button type="button" data-plus="1" aria-label="Une personne de plus" ${n >= limit ? "disabled" : ""}>${icon("plus")}</button>
+        </div>
+      </div>
+      ${
+        n
+          ? `<button type="button" class="plus-names" id="plus-names">${named ? `<span>${esc(companionsText(mine))}</span><span class="plus-edit">${icon("pencil")}<span>Modifier</span></span>` : `<span class="muted">Prénoms facultatifs</span><span class="plus-edit">${icon("pencil")}<span>Ajouter</span></span>`}</button>`
+          : limit < PLUS_ONES_CAP
+            ? `<p class="muted small plus-hint">Jusqu'à ${plural(limit, "accompagnant")} par invité.</p>`
+            : ""
+      }
+      ${n > limit ? `<p class="muted small plus-hint">L'hôte limite maintenant à ${limit ? `+${limit}` : "aucun accompagnant"} par invité.</p>` : ""}
+    </div>`;
+}
+
+async function savePlusOnes(eventId, token, names) {
+  renderSpace(eventId, await api(`/parties/${eventId}/plus-ones`, { method: "PUT", body: { names }, token }));
+}
+
+// Names of the people who come with me, all optional.
+function plusOnesDialog(eventId, token) {
+  const limit = plusOnesLimit(space.data);
+  const names = [...(space.data.me.plusOnes || [])];
+  const dlg = document.createElement("dialog");
+  dlg.className = "card guest-menu plus-dialog";
+  const draw = () => {
+    dlg.innerHTML = `
+      <h2>${icon("userPlus")} Qui vient avec vous&nbsp;?</h2>
+      <p class="muted small">Les prénoms sont facultatifs : ils apparaîtront dans la liste des invités.</p>
+      <form method="dialog" class="plus-form">
+        ${names
+          .map(
+            (n, i) => `<div class="plus-name-row">
+              <input name="n${i}" value="${esc(n)}" maxlength="40" placeholder="Prénom de la personne ${i + 1}" aria-label="Prénom de la personne ${i + 1}" autocomplete="off" enterkeyhint="${i === names.length - 1 ? "done" : "next"}">
+              <button type="button" class="icon-btn" data-remove="${i}" aria-label="Retirer la personne ${i + 1}">${icon("x")}</button>
+            </div>`,
+          )
+          .join("")}
+        ${names.length < limit ? `<button type="button" class="link small plus-add" data-add>${icon("plus")} Ajouter une personne</button>` : ""}
+        <button class="primary" type="submit">Enregistrer</button>
+        <button type="button" class="link" data-close>Annuler</button>
+      </form>`;
+  };
+  const read = () => names.forEach((_, i) => (names[i] = dlg.querySelector(`[name="n${i}"]`)?.value ?? names[i]));
+  draw();
+  document.body.append(dlg);
+  dlg.addEventListener("close", () => dlg.remove());
+  dlg.addEventListener("click", (e) => {
+    if (e.target === dlg || e.target.closest("[data-close]")) return dlg.close();
+    const remove = e.target.closest("[data-remove]");
+    const add = e.target.closest("[data-add]");
+    if (!remove && !add) return;
+    read();
+    if (remove) names.splice(Number(remove.dataset.remove), 1);
+    else names.push("");
+    draw();
+    dlg.querySelector(add ? `[name="n${names.length - 1}"]` : "input")?.focus();
+  });
+  dlg.addEventListener("submit", (e) => {
+    e.preventDefault();
+    read();
+    withBusy(dlg.querySelector('button[type="submit"]'), async () => {
+      try {
+        await savePlusOnes(eventId, token, names.map((n) => n.trim()));
+        dlg.close();
+      } catch (err) {
+        toast(err.message);
+      }
+    });
+  });
+  dlg.showModal();
+  if (!names.some((n) => n.trim())) dlg.querySelector("input")?.focus();
+}
+
 // Marks a rendered block so live updates can swap it on its own (see patchSpace).
 function live(key, html) {
   return html ? html.replace(/^(\s*<[a-z]+)/, `$1 data-live="${key}"`) : "";
@@ -902,20 +1013,33 @@ function spaceHtml(eventId, data, identity) {
 
   const groups = { going: [], maybe: [], not_going: [], none: [] };
   for (const g of guests) groups[g.rsvp || "none"].push(g);
+  // Companions follow the guest they come with: named ones as their own chip, the rest as "+N".
+  const companions = (g) => {
+    const list = comingWith(g);
+    const named = list.map((n) => n.trim()).filter(Boolean);
+    const unnamed = list.length - named.length;
+    const by = esc(g.id === me.id ? "vous" : g.name);
+    return [
+      ...named.map((n) => `<li class="companion" title="Vient avec ${by}">${avatar(n, "sm")}${esc(n)} <span class="badge">avec ${by}</span></li>`),
+      unnamed ? `<li class="companion anon" title="${plural(unnamed, "personne")} avec ${by}"><span class="avatar sm more">+${unnamed}</span><span class="badge">avec ${by}</span></li>` : "",
+    ].join("");
+  };
   const guestList = (key, label) =>
     groups[key].length
-      ? `<div class="guest-group"><h3>${label} <span class="count">${groups[key].length}</span></h3>
+      ? `<div class="guest-group"><h3>${label} <span class="count">${headcount(groups[key])}</span></h3>
          <ul class="guests">${groups[key]
            .map(
              (g) => {
                const inner = `${avatar(g.name, "sm")}${esc(g.name)}${g.isHost ? ' <span class="badge">hôte</span>' : ""}${g.id === me.id ? ' <span class="badge you">vous</span>' : ""}`;
-               return me.isHost && g.id !== me.id
+               return (me.isHost && g.id !== me.id
                  ? `<li><button class="guest-chip" data-host-toggle="${esc(g.id)}" data-name="${esc(g.name)}" data-is-host="${g.isHost ? 1 : 0}">${inner}</button></li>`
-                 : `<li>${inner}</li>`;
+                 : `<li>${inner}</li>`) + companions(g);
              },
            )
            .join("")}</ul></div>`
       : "";
+  const plusMax = data.plusOnes?.max ?? 0;
+  const plusChoices = PLUS_ONES_CHOICES.some(([v]) => v === plusMax) ? PLUS_ONES_CHOICES : [...PLUS_ONES_CHOICES, [plusMax, `+${plusMax}`]].sort((a, b) => a[0] - b[0]);
   const style = parseStyle(event.color);
 
   return `
@@ -926,7 +1050,7 @@ function spaceHtml(eventId, data, identity) {
       eventId,
       event,
       groups.going.length
-        ? `<p class="hero-going">${faces(groups.going)} <span>${groups.going.length} ${groups.going.length > 1 ? "viennent" : "vient"}</span></p>`
+        ? `<p class="hero-going">${faces(groups.going)} <span>${headcount(groups.going)} ${headcount(groups.going) > 1 ? "viennent" : "vient"}</span></p>`
         : "",
     ))}
 
@@ -975,19 +1099,26 @@ function spaceHtml(eventId, data, identity) {
               `<button data-rsvp="${key}" class="rsvp-${key} ${me.rsvp === key ? "selected" : ""}" aria-pressed="${me.rsvp === key}" aria-label="${RSVP_LABELS[key]}">
                 <span class="rsvp-ic">${icon(RSVP_ICON[key])}</span>
                 <span class="rsvp-label">${RSVP_SHORT[key]}</span>
-                <span class="rsvp-count">${groups[key].length}</span>
+                <span class="rsvp-count">${headcount(groups[key])}</span>
               </button>`,
           )
           .join("")}
       </div>
+      ${plusOnesHtml(data)}
     </section>
 
     <section data-live="guests" data-card="guests" class="card">
-      <h2>${icon("users")} Invités <span class="count">${guests.length}</span></h2>
+      <h2>${icon("users")} Invités <span class="count">${headcount(guests)}</span></h2>
       ${guestList("going", "Viennent")}
       ${guestList("maybe", "Peut-être")}
       ${guestList("not_going", "Ne viennent pas")}
       ${guestList("none", "Pas encore répondu")}
+      ${
+        me.isHost && data.plusOnes?.enabled
+          ? `<label class="plus-setting small">${icon("userPlus")}<span>Accompagnants par invité</span>
+               <select id="plus-max">${plusChoices.map(([v, l]) => `<option value="${v}" ${v === plusMax ? "selected" : ""}>${l}</option>`).join("")}</select></label>`
+          : ""
+      }
       ${me.isHost && guests.length > 1 ? `<p class="muted small">${icon("crown")} Touchez un invité pour en faire un co-hôte, ou pour retirer un doublon.</p>` : ""}
     </section>
 
@@ -1119,6 +1250,17 @@ function bindLive(key) {
         if (guest) guestMenu(eventId, guests, guest, token);
       });
     }
+    const max = el.querySelector("#plus-max");
+    max?.addEventListener("change", async () => {
+      max.disabled = true;
+      try {
+        renderSpace(eventId, await api(`/parties/${eventId}/plus-ones-settings`, { method: "PUT", body: { max: Number(max.value) }, token }));
+        toast(Number(max.value) ? "Réglage enregistré" : "Les invités viennent seuls");
+      } catch (err) {
+        toast(err.message);
+        max.disabled = false;
+      }
+    });
   }
   if (key === "rsvp") {
     for (const btn of el.querySelectorAll("[data-rsvp]")) {
@@ -1131,6 +1273,24 @@ function bindLive(key) {
         }),
       );
     }
+    for (const btn of el.querySelectorAll("[data-plus]")) {
+      btn.addEventListener("click", () =>
+        withBusy(btn, async () => {
+          const names = [...(space.data.me.plusOnes || [])];
+          if (btn.dataset.plus === "1") names.push("");
+          else {
+            const blank = names.lastIndexOf(""); // drop a nameless companion before a named one
+            names.splice(blank >= 0 ? blank : names.length - 1, 1);
+          }
+          try {
+            await savePlusOnes(eventId, token, names);
+          } catch (err) {
+            toast(err.message);
+          }
+        }),
+      );
+    }
+    el.querySelector("#plus-names")?.addEventListener("click", () => plusOnesDialog(eventId, token));
   }
 }
 

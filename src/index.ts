@@ -38,6 +38,7 @@ type GuestRow = {
   is_host: number;
   rsvp: Rsvp | null;
   created_at: string;
+  plus_ones?: string; // JSON array of names; missing before migration 0011
 };
 type Rsvp = "going" | "maybe" | "not_going";
 type CommentRow = { id: string; guest_id: string; name: string; body: string; created_at: string; edited_at?: string };
@@ -244,21 +245,74 @@ async function listComments(db: D1Database, eventId: string) {
 }
 
 function publicGuest(g: GuestRow) {
-  return { id: g.id, name: g.name, isHost: g.is_host === 1, rsvp: g.rsvp };
+  return { id: g.id, name: g.name, isHost: g.is_host === 1, rsvp: g.rsvp, plusOnes: parsePlusOnes(g.plus_ones) };
+}
+
+// ---------- plus-ones ----------
+// A guest can bring companions, named or not. They are stored on the guest as a JSON
+// array of names ("" = no name given) and count only while the guest answered going/maybe.
+const PLUS_ONES_CAP = 10; // per guest; also what the host's "no limit" means
+const PLUS_ONES_DEFAULT = PLUS_ONES_CAP;
+
+function parsePlusOnes(raw: string | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const list = JSON.parse(raw);
+    return Array.isArray(list) ? list.filter((n) => typeof n === "string").slice(0, PLUS_ONES_CAP) : [];
+  } catch {
+    return [];
+  }
+}
+
+const noColumn = (err: unknown) => /no such column/.test(String(err));
+
+// SQL for "people coming": each going guest plus their companions. Falls back to a plain
+// count when migration 0011 isn't applied yet, so the code can ship before the migration.
+const GOING_SQL = (where: string) =>
+  `(SELECT COALESCE(SUM(1 + json_array_length(plus_ones)), 0) FROM guests WHERE ${where} AND rsvp = 'going')`;
+const GOING_SQL_OLD = (where: string) => `(SELECT COUNT(*) FROM guests WHERE ${where} AND rsvp = 'going')`;
+
+async function withPlusOnesFallback<T>(run: (going: (where: string) => string) => Promise<T>): Promise<T> {
+  try {
+    return await run(GOING_SQL);
+  } catch (err) {
+    if (noColumn(err)) return run(GOING_SQL_OLD);
+    throw err;
+  }
+}
+
+// The host's setting; null when the migration isn't there (feature hidden).
+async function plusOnesMax(db: D1Database, eventId: string): Promise<number | null> {
+  try {
+    const row = await db.prepare("SELECT plus_ones_max FROM events WHERE id = ?").bind(eventId).first<{ plus_ones_max: number }>();
+    return row ? Math.max(0, Math.min(PLUS_ONES_CAP, row.plus_ones_max ?? PLUS_ONES_DEFAULT)) : PLUS_ONES_DEFAULT;
+  } catch (err) {
+    if (noColumn(err)) return null;
+    throw err;
+  }
+}
+
+async function eventGuests(db: D1Database, eventId: string): Promise<GuestRow[]> {
+  const sql = (cols: string) =>
+    db.prepare(`SELECT ${cols} FROM guests WHERE event_id = ? ORDER BY is_host DESC, created_at`).bind(eventId).all<GuestRow>();
+  try {
+    return (await sql("id, event_id, name, is_host, rsvp, created_at, plus_ones")).results;
+  } catch (err) {
+    if (noColumn(err)) return (await sql("id, event_id, name, is_host, rsvp, created_at")).results;
+    throw err;
+  }
 }
 
 async function fullEvent(env: Env, event: EventRow, me: GuestRow) {
   const db = env.DB;
-  const { results } = await db
-    .prepare(
-      "SELECT id, event_id, name, is_host, rsvp, created_at FROM guests WHERE event_id = ? ORDER BY is_host DESC, created_at",
-    )
-    .bind(event.id)
-    .all<GuestRow>();
+  const results = await eventGuests(db, event.id);
+  const meRow = results.find((g) => g.id === me.id);
+  const max = await plusOnesMax(db, event.id);
   return {
     event,
-    me: publicGuest(me),
+    me: publicGuest(meRow ? { ...meRow, rsvp: me.rsvp, name: me.name } : me),
     guests: results.map(publicGuest),
+    plusOnes: { enabled: max !== null, max: max ?? 0 },
     comments: await listComments(db, event.id),
     spotify: await spotifyStatus(env, event.id),
     gifs: !!env.GIPHY_API_KEY,
@@ -310,13 +364,15 @@ app.get("/parties/:id", async (c) => {
   const event = await getEvent(c.env.DB, c.req.param("id"));
   const me = await currentGuest(c, event.id);
   if (me) return c.json(await fullEvent(c.env, event, me));
-  const stats = await c.env.DB.prepare(
-    `SELECT
-       (SELECT group_concat(name, ' et ') FROM (SELECT name FROM guests WHERE event_id = ?1 AND is_host = 1 ORDER BY created_at)) AS host,
-       (SELECT COUNT(*) FROM guests WHERE event_id = ?1 AND rsvp = 'going') AS going`,
-  )
-    .bind(event.id)
-    .first<{ host: string | null; going: number }>();
+  const stats = await withPlusOnesFallback((going) =>
+    c.env.DB.prepare(
+      `SELECT
+         (SELECT group_concat(name, ' et ') FROM (SELECT name FROM guests WHERE event_id = ?1 AND is_host = 1 ORDER BY created_at)) AS host,
+         ${going("event_id = ?1")} AS going`,
+    )
+      .bind(event.id)
+      .first<{ host: string | null; going: number }>(),
+  );
   return c.json({
     preview: { title: event.title, date: event.date, time: event.time, theme: event.theme, background_version: event.background_version ?? 0, color: event.color ?? "", hostName: stats?.host, going: stats?.going ?? 0 },
   });
@@ -379,6 +435,12 @@ app.delete("/parties/:id/guests/:guestId", async (c) => {
     db.prepare("UPDATE guests SET rsvp = COALESCE(rsvp, ?2), is_host = MAX(is_host, ?3), updated_at = datetime('now') WHERE id = ?1")
       .bind(intoId, dup.rsvp, dup.is_host),
   ];
+  if (await db.prepare("SELECT 1 FROM pragma_table_info('guests') WHERE name = 'plus_ones'").first()) {
+    // The original keeps their companions; if they had none, they take the duplicate's.
+    stmts.push(
+      db.prepare("UPDATE guests SET plus_ones = (SELECT plus_ones FROM guests WHERE id = ?2) WHERE id = ?1 AND plus_ones = '[]'").bind(intoId, dup.id),
+    );
+  }
   if (await hasTable(db, "photos")) {
     stmts.push(db.prepare("UPDATE photos SET guest_id = ?1 WHERE guest_id = ?2").bind(intoId, dup.id));
   }
@@ -411,7 +473,55 @@ app.put("/parties/:id/rsvp", async (c) => {
   await c.env.DB.prepare("UPDATE guests SET rsvp = ?, updated_at = datetime('now') WHERE id = ?")
     .bind(status, me.id)
     .run();
+  if (status === "not_going") {
+    // Nobody comes with someone who doesn't come.
+    try {
+      await c.env.DB.prepare("UPDATE guests SET plus_ones = '[]' WHERE id = ?").bind(me.id).run();
+    } catch (err) {
+      if (!noColumn(err)) throw err;
+    }
+  }
   return c.json(await fullEvent(c.env, event, { ...me, rsvp: status as Rsvp }));
+});
+
+// Who comes with me: { names: ["Léa", "", …] }, one entry per companion, "" = no name.
+app.put("/parties/:id/plus-ones", async (c) => {
+  const db = c.env.DB;
+  const event = await getEvent(db, c.req.param("id"));
+  const me = await requireGuest(c, event.id);
+  const max = await plusOnesMax(db, event.id);
+  if (max === null) throw new HttpError(503, "Les accompagnants ne sont pas encore activés");
+  const raw = (await body(c)).names;
+  if (!Array.isArray(raw)) throw new HttpError(400, "names doit être une liste de prénoms");
+  const names = raw.map((n) => str(n, "name", LIMITS.name));
+  if (names.length && me.rsvp !== "going" && me.rsvp !== "maybe") {
+    throw new HttpError(400, "Répondez « Oui » ou « Peut-être » avant d'ajouter des accompagnants");
+  }
+  // Hosts set the rule, so it doesn't apply to them (up to the app's cap).
+  const limit = me.is_host === 1 ? PLUS_ONES_CAP : max;
+  if (names.length > limit) {
+    throw new HttpError(400, limit ? `Vous pouvez venir avec ${limit} personne${limit > 1 ? "s" : ""} au plus` : "L'hôte n'a pas prévu d'accompagnants");
+  }
+  await db.prepare("UPDATE guests SET plus_ones = ?, updated_at = datetime('now') WHERE id = ?")
+    .bind(JSON.stringify(names), me.id)
+    .run();
+  return c.json(await fullEvent(c.env, event, me));
+});
+
+// Host setting: { max: 0..10 }, how many companions each guest may bring (0 = none, 10 = no limit).
+// Guests who already said more keep their answer; they just can't add more.
+app.put("/parties/:id/plus-ones-settings", async (c) => {
+  const db = c.env.DB;
+  const event = await getEvent(db, c.req.param("id"));
+  const me = await requireGuest(c, event.id);
+  if (me.is_host !== 1) throw new HttpError(403, "Seul l'hôte peut changer ce réglage");
+  if ((await plusOnesMax(db, event.id)) === null) throw new HttpError(503, "Les accompagnants ne sont pas encore activés");
+  const max = (await body(c)).max;
+  if (typeof max !== "number" || !Number.isInteger(max) || max < 0 || max > PLUS_ONES_CAP) {
+    throw new HttpError(400, `max doit être un nombre entre 0 et ${PLUS_ONES_CAP}`);
+  }
+  await db.prepare("UPDATE events SET plus_ones_max = ?, updated_at = datetime('now') WHERE id = ?").bind(max, event.id).run();
+  return c.json(await fullEvent(c.env, event, me));
 });
 
 // Rename yourself.
@@ -489,15 +599,17 @@ app.post("/mine", async (c) => {
   const marks = hashes.map(() => "?").join(", ");
   // Tokens of merged duplicates (guest_aliases) count too, once migration 0008 is in.
   const aliased = (await hasAliases(c.env.DB)) ? ` OR g.id IN (SELECT guest_id FROM guest_aliases WHERE token_hash IN (${marks}))` : "";
-  const { results } = await c.env.DB.prepare(
-    `SELECT e.id, e.title, e.date, e.time, g.is_host, g.rsvp,
-       (SELECT COUNT(*) FROM guests WHERE event_id = e.id AND rsvp = 'going') AS going
-     FROM guests g JOIN events e ON e.id = g.event_id
-     WHERE g.token_hash IN (${marks})${aliased}
-     ORDER BY e.date, e.time`,
-  )
-    .bind(...hashes, ...(aliased ? hashes : []))
-    .all<{ id: string; title: string; date: string; time: string; is_host: number; rsvp: Rsvp | null; going: number }>();
+  const { results } = await withPlusOnesFallback((going) =>
+    c.env.DB.prepare(
+      `SELECT e.id, e.title, e.date, e.time, g.is_host, g.rsvp,
+         ${going("event_id = e.id")} AS going
+       FROM guests g JOIN events e ON e.id = g.event_id
+       WHERE g.token_hash IN (${marks})${aliased}
+       ORDER BY e.date, e.time`,
+    )
+      .bind(...hashes, ...(aliased ? hashes : []))
+      .all<{ id: string; title: string; date: string; time: string; is_host: number; rsvp: Rsvp | null; going: number }>(),
+  );
   return c.json({
     events: results.map((r) => ({ id: r.id, title: r.title, date: r.date, time: r.time, isHost: r.is_host === 1, rsvp: r.rsvp, going: r.going })),
   });

@@ -40,6 +40,33 @@ check("rsvp going", rsvp.data.me?.rsvp === "going");
 check("bad rsvp rejected", (await call(`/parties/${eventId}/rsvp`, { method: "PUT", body: { status: "yes" }, token: guest.token })).status === 400);
 check("rsvp without token rejected", (await call(`/parties/${eventId}/rsvp`, { method: "PUT", body: { status: "going" } })).status === 401);
 
+// Plus-ones
+{
+  const plus = (names, token = guest.token) => call(`/parties/${eventId}/plus-ones`, { method: "PUT", body: { names }, token });
+  const two = await plus(["Léa", ""]);
+  check("guest brings two companions", two.status === 200 && two.data.me.plusOnes.join("|") === "Léa|" && two.data.plusOnes?.enabled === true);
+  check("companions show in the guest list", two.data.guests.find((g) => g.id === guest.id)?.plusOnes.length === 2);
+  check("preview counts companions", (await call(`/parties/${eventId}`)).data.preview.going === 3);
+  check("my events counts companions", (await call("/mine", { method: "POST", body: { tokens: [guest.token] } })).data.events[0].going === 3);
+  check("plus-ones need a list", (await plus("Léa")).status === 400);
+  check("plus-ones need a token", (await call(`/parties/${eventId}/plus-ones`, { method: "PUT", body: { names: [] } })).status === 401);
+  check("guest cannot change the limit", (await call(`/parties/${eventId}/plus-ones-settings`, { method: "PUT", body: { max: 0 }, token: guest.token })).status === 403);
+  check("bad limit rejected", (await call(`/parties/${eventId}/plus-ones-settings`, { method: "PUT", body: { max: 11 }, token: host.token })).status === 400);
+  const one = await call(`/parties/${eventId}/plus-ones-settings`, { method: "PUT", body: { max: 1 }, token: host.token });
+  check("host limits to +1", one.status === 200 && one.data.plusOnes.max === 1);
+  check("guest keeps companions above a new limit", one.data.guests.find((g) => g.id === guest.id)?.plusOnes.length === 2);
+  check("over the limit rejected", (await plus(["A", "B"])).status === 400);
+  check("within the limit ok", (await plus(["Tom"])).data.me.plusOnes.join() === "Tom");
+  await call(`/parties/${eventId}/rsvp`, { method: "PUT", body: { status: "going" }, token: host.token });
+  check("host is not limited", (await plus(["A", "B", "C"], host.token)).status === 200);
+  await plus([], host.token);
+  const no = await call(`/parties/${eventId}/rsvp`, { method: "PUT", body: { status: "not_going" }, token: guest.token });
+  check("not going drops companions", no.data.me.plusOnes.length === 0);
+  check("not going can't bring anyone", (await plus(["Tom"])).status === 400);
+  await call(`/parties/${eventId}/rsvp`, { method: "PUT", body: { status: "going" }, token: guest.token });
+  await call(`/parties/${eventId}/plus-ones-settings`, { method: "PUT", body: { max: 10 }, token: host.token });
+}
+
 check("guest cannot edit event", (await call(`/parties/${eventId}`, { method: "PATCH", body: { title: "x" }, token: guest.token })).status === 403);
 const edited = await call(`/parties/${eventId}`, { method: "PATCH", body: { title: "Renamed" }, token: host.token });
 check("host can edit event", edited.data.event?.title === "Renamed");
