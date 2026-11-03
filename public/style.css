@@ -858,3 +858,34 @@ button .icon, .btn .icon { vertical-align: -0.2em; }
   .track-side { display: none; }
   iframe.spotify { height: 152px; }
 }
+
+/* ---------- RSVP card: three equal answers ---------- */
+.rsvp-status { margin: 4px 0 0; font-size: 0.9rem; color: var(--muted); }
+.rsvp-status strong { color: var(--text); }
+.rsvp { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.rsvp button {
+  display: grid; grid-template-rows: auto auto auto; justify-items: center; align-content: center; gap: 6px;
+  min-height: 104px; padding: 14px 6px; border-radius: 20px; text-align: center; line-height: 1.1;
+  background: var(--fill, var(--bg)); color: var(--text); font-size: 1rem; font-weight: 700;
+}
+.rsvp-ic { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--text) 8%, transparent); }
+.rsvp button .rsvp-ic .icon { width: 20px; height: 20px; }
+.rsvp button.selected { background: var(--accent); color: var(--accent-text); font-weight: 800; }
+.rsvp button.selected .rsvp-ic { background: color-mix(in srgb, var(--accent-text) 14%, transparent); }
+
+/* Half width: three equal rows, icon left, count right */
+@container (max-width: 260px) {
+  .rsvp { grid-template-columns: 1fr; gap: 6px; }
+  .rsvp button {
+    grid-template-columns: auto 1fr auto; grid-template-rows: none; justify-items: start; align-items: center;
+    min-height: 52px; padding: 8px 12px 8px 8px; border-radius: 16px; gap: 10px; text-align: left; font-size: 0.95rem;
+  }
+  .rsvp-ic { width: 34px; height: 34px; }
+  .rsvp button .rsvp-ic .icon { width: 18px; height: 18px; }
+  .rsvp-status { font-size: 0.8rem; }
+  .rsvp button { grid-template-columns: auto 1fr; padding-right: 10px; }
+  .rsvp-label { white-space: nowrap; }
+  /* Fill the tile when its neighbour is taller: the three answers share the height. */
+  .rsvp { flex: 1; grid-auto-rows: 1fr; }
+}
+.card[data-card="rsvp"] { display: flex; flex-direction: column; }
