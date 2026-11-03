@@ -271,6 +271,7 @@ const CARDS = [
   ["rsvp", "Vous venez ?"],
   ["guests", "Invités"],
   ["music", "Playlist"],
+  ["photos", "Photos"],
   ["comments", "Commentaires"],
 ];
 const CARD_PROPS = { titleFont: "font", title: "color", textFont: "font", text: "color" };
@@ -869,6 +870,8 @@ function spaceHtml(eventId, data, identity) {
 
     ${live("music", musicSection(event, me, data.spotify))}
 
+    ${live("photos", photosSection(eventId, event, me, data.photos))}
+
     <section data-card="comments" class="card">
       <h2>💬 Commentaires</h2>
       <ul class="comments" id="comments"></ul>
@@ -969,6 +972,7 @@ function bindLive(key) {
   const el = app.querySelector(`[data-live="${key}"]`);
   if (!el) return;
   if (key === "music") setupMusic(eventId, space.data, token);
+  if (key === "photos") setupPhotos(eventId, token);
   if (key === "info") el.querySelector("#edit")?.addEventListener("click", () => renderEdit(eventId, space.data));
   if (key === "guests") {
     for (const btn of el.querySelectorAll("[data-host-toggle]")) {
@@ -1042,7 +1046,7 @@ function guestMenu(eventId, guests, g, token) {
     <h2>${avatar(g.name, "sm")} ${esc(g.name)}</h2>
     <button data-act="host">${g.isHost ? "Retirer des hôtes" : "👑 Faire co-hôte"}</button>
     <h3>Doublon ?</h3>
-    <p class="muted small">Si ${esc(g.name)} est la même personne qu'un autre invité, fusionnez : ses commentaires, réactions, chansons et sa réponse passent sur l'autre, et son lien continue de marcher.</p>
+    <p class="muted small">Si ${esc(g.name)} est la même personne qu'un autre invité, fusionnez : ses commentaires, réactions, chansons, photos et sa réponse passent sur l'autre, et son lien continue de marcher.</p>
     <div class="merge-row">
       <select id="merge-into" aria-label="Fusionner avec">
         <option value="">Fusionner avec…</option>
@@ -1084,7 +1088,7 @@ function guestMenu(eventId, guests, g, token) {
     });
   });
   dlg.querySelector('[data-act="remove"]').addEventListener("click", (e) => {
-    if (!confirm(`Retirer ${g.name} ? Ses commentaires, réactions et chansons ajoutées seront supprimés. S'il rouvre le lien, il devra rejoindre à nouveau.`)) return;
+    if (!confirm(`Retirer ${g.name} ? Ses commentaires, réactions, chansons et photos ajoutées seront supprimés. S'il rouvre le lien, il devra rejoindre à nouveau.`)) return;
     run(e.currentTarget, async () => {
       renderSpace(eventId, await api(path, { method: "DELETE", token }));
       return `${g.name} a été retiré`;
@@ -1244,6 +1248,243 @@ function setupMusic(eventId, data, token) {
       renderSpace(eventId, await api(`/parties/${eventId}`, { token }));
     });
   });
+}
+
+// ---------- photo album ----------
+// Guests add party photos here, separate from the comments. Each photo is shrunk in the
+// browser (about 1600px JPEG, which also strips EXIF/GPS data) plus a small thumbnail for
+// the grid, then sent one by one. Tapping a photo opens a full-screen viewer.
+
+const photoUrl = (eventId, id, extra = "") => `/api/parties/${eventId}/photos/${encodeURIComponent(id)}${extra}`;
+
+function photosSection(eventId, event, me, album) {
+  if (!album?.enabled) {
+    return me.isHost
+      ? `<section data-card="photos" class="card"><h2>📸 Photos</h2>
+           <p class="muted small">🔌 L'album photo n'est pas encore activé sur le serveur (visible par l'hôte seulement).</p></section>`
+      : "";
+  }
+  const photos = album.photos || [];
+  const day = formatWhen(event.date).replace(/ \d{4}$/, "");
+  return `<section data-card="photos" class="card photos">
+      <h2>📸 Photos ${photos.length ? `<span class="count">${photos.length}</span>` : ""}</h2>
+      ${
+        album.canUpload
+          ? `<div class="photo-add">
+               <button class="primary" id="photo-add">📷 Ajouter des photos</button>
+               <input type="file" accept="image/*" multiple id="photo-file" hidden>
+               <span class="muted small" id="photo-progress" aria-live="polite"></span>
+             </div>`
+          : `<p class="muted small">🔒 L'album ouvre le jour de la fête (${esc(day)}). Revenez avec vos plus belles photos !</p>`
+      }
+      ${
+        photos.length
+          ? `<div class="photo-grid">${photos
+              .map(
+                (p) =>
+                  `<button class="photo-thumb" data-photo="${esc(p.id)}" aria-label="Photo de ${esc(p.name)}"><img src="${esc(photoUrl(eventId, p.id, "?thumb=1"))}" alt="" loading="lazy"></button>`,
+              )
+              .join("")}</div>`
+          : album.canUpload
+            ? `<p class="muted small">Pas encore de photos. Soyez le premier ou la première ! Elles restent ici, à part des commentaires.</p>`
+            : ""
+      }
+      ${
+        me.isHost
+          ? `<label class="photo-setting small"><input type="checkbox" id="photo-party-day" ${album.partyDayOnly ? "checked" : ""}>
+               Ouvrir l'album aux invités seulement le jour de la fête</label>`
+          : ""
+      }
+    </section>`;
+}
+
+// Draws the image at most `max` px on its longest side and encodes it as JPEG under `maxBytes`.
+async function encodeJpeg(bitmap, max, maxBytes) {
+  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#fff"; // transparent PNGs get a white background instead of black
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  for (const quality of [0.85, 0.72, 0.6, 0.5]) {
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+    if (blob && blob.size <= maxBytes) return { blob, width: canvas.width, height: canvas.height };
+  }
+  throw new Error("trop lourde");
+}
+
+async function shrinkPhoto(file) {
+  const bitmap = await createImageBitmap(file); // follows the EXIF rotation
+  try {
+    const photo = await encodeJpeg(bitmap, 1600, 1_900_000);
+    const thumb = await encodeJpeg(bitmap, 480, 280_000);
+    return { photo: photo.blob, thumb: thumb.blob, width: photo.width, height: photo.height };
+  } finally {
+    bitmap.close?.();
+  }
+}
+
+async function uploadPhoto(eventId, token, file) {
+  const shrunk = await shrinkPhoto(file);
+  const form = new FormData();
+  form.append("photo", shrunk.photo, "photo.jpg");
+  form.append("thumb", shrunk.thumb, "thumb.jpg");
+  form.append("width", String(shrunk.width));
+  form.append("height", String(shrunk.height));
+  let res;
+  try {
+    res = await fetch(`/api/parties/${eventId}/photos`, { method: "POST", headers: { Authorization: `Bearer ${token}` }, body: form });
+  } catch {
+    throw new Error("Impossible de joindre le serveur. Vérifiez votre connexion.");
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.error || `Erreur (${res.status})`);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+function setupPhotos(eventId, token) {
+  const el = app.querySelector('[data-live="photos"]');
+  if (!el) return;
+  for (const btn of el.querySelectorAll("[data-photo]")) {
+    btn.addEventListener("click", () => openPhotoViewer(eventId, token, btn.dataset.photo));
+  }
+
+  el.querySelector("#photo-party-day")?.addEventListener("change", async (ev) => {
+    const box = ev.currentTarget;
+    box.disabled = true;
+    try {
+      const next = await api(`/parties/${eventId}/photos-settings`, { method: "PUT", body: { partyDayOnly: box.checked }, token });
+      toast(box.checked ? "L'album ouvrira le jour de la fête 🔒" : "L'album est ouvert à tous 📸");
+      box.disabled = false;
+      patchSpace(next);
+    } catch (err) {
+      box.checked = !box.checked;
+      box.disabled = false;
+      toast(err.message);
+    }
+  });
+
+  const add = el.querySelector("#photo-add");
+  const input = el.querySelector("#photo-file");
+  if (!add || !input) return;
+  add.addEventListener("click", () => input.click());
+  input.addEventListener("change", async () => {
+    const files = [...input.files].slice(0, 30);
+    input.value = "";
+    if (!files.length) return;
+    const progress = el.querySelector("#photo-progress");
+    add.disabled = true; // also keeps live updates from swapping this block mid-upload
+    let sent = 0;
+    const failed = [];
+    for (const [i, file] of files.entries()) {
+      progress.textContent = `Envoi ${i + 1}/${files.length}…`;
+      try {
+        await uploadPhoto(eventId, token, file);
+        sent++;
+      } catch (err) {
+        // Stop on errors that will repeat (album closed or full, too many photos…).
+        if ([403, 409, 429, 503].includes(err.status)) {
+          failed.push(err.message);
+          break;
+        }
+        failed.push(err.message === "trop lourde" || err instanceof DOMException || !err.status ? `${file.name} : format non pris en charge` : err.message);
+      }
+    }
+    progress.textContent = "";
+    add.disabled = false;
+    if (sent) toast(`${sent} photo${sent > 1 ? "s" : ""} ajoutée${sent > 1 ? "s" : ""} 📸`);
+    if (failed.length) toast(failed[0] + (failed.length > 1 ? ` (+${failed.length - 1} autre${failed.length > 2 ? "s" : ""})` : ""), 5000);
+    if (!sent) return;
+    try {
+      patchSpace(await api(`/parties/${eventId}`, { token }));
+    } catch {}
+  });
+}
+
+// Full-screen viewer: swipe or arrows to move, with who posted it, download and delete.
+function openPhotoViewer(eventId, token, photoId) {
+  let photos = (space?.eventId === eventId ? space.data.photos?.photos : null) || [];
+  let index = photos.findIndex((p) => p.id === photoId);
+  if (index < 0) return;
+  const dlg = document.createElement("dialog");
+  dlg.className = "photo-viewer";
+  dlg.innerHTML = `
+    <div class="pv-top">
+      <span class="pv-who" id="pv-who"></span>
+      <span class="pv-count muted" id="pv-count"></span>
+      <button class="pv-btn" data-act="close" aria-label="Fermer">✕</button>
+    </div>
+    <div class="pv-stage">
+      <button class="pv-btn pv-nav" data-act="prev" aria-label="Photo précédente">‹</button>
+      <img id="pv-img" alt="">
+      <button class="pv-btn pv-nav" data-act="next" aria-label="Photo suivante">›</button>
+    </div>
+    <div class="pv-bottom">
+      <a class="pv-btn" id="pv-download" download>⬇️ Enregistrer</a>
+      <button class="pv-btn" data-act="delete" id="pv-delete">🗑️ Supprimer</button>
+    </div>`;
+  document.body.append(dlg);
+  const img = dlg.querySelector("#pv-img");
+  const show = () => {
+    const p = photos[index];
+    const me = space.data.me;
+    img.src = photoUrl(eventId, p.id);
+    img.style.aspectRatio = `${p.width} / ${p.height}`;
+    dlg.querySelector("#pv-who").innerHTML = `${avatar(p.name, "sm")} <span><strong>${esc(p.name)}</strong> · ${esc(formatAgo(p.createdAt))}</span>`;
+    dlg.querySelector("#pv-count").textContent = photos.length > 1 ? `${index + 1}/${photos.length}` : "";
+    dlg.querySelector("#pv-download").href = photoUrl(eventId, p.id, "?download=1");
+    dlg.querySelector("#pv-delete").hidden = !(p.guestId === me.id || me.isHost);
+    for (const nav of dlg.querySelectorAll(".pv-nav")) nav.hidden = photos.length < 2;
+    // Load the neighbours so swiping feels instant.
+    for (const n of [index + 1, index - 1]) if (photos[n]) new Image().src = photoUrl(eventId, photos[n].id);
+  };
+  const go = (step) => {
+    if (photos.length < 2) return;
+    index = (index + step + photos.length) % photos.length;
+    show();
+  };
+  dlg.addEventListener("close", () => dlg.remove());
+  dlg.addEventListener("click", (e) => {
+    const act = e.target.closest("[data-act]")?.dataset.act;
+    if (act === "close" || e.target.classList.contains("pv-stage")) dlg.close();
+    if (act === "prev") go(-1);
+    if (act === "next") go(1);
+    if (act === "delete") {
+      const p = photos[index];
+      if (!confirm(p.guestId === space.data.me.id ? "Supprimer votre photo ?" : `Supprimer la photo de ${p.name} ?`)) return;
+      withBusy(e.target.closest("button"), async () => {
+        await api(`/parties/${eventId}/photos/${encodeURIComponent(p.id)}`, { method: "DELETE", token });
+        toast("Photo supprimée");
+        photos = photos.filter((x) => x.id !== p.id);
+        try {
+          patchSpace(await api(`/parties/${eventId}`, { token }));
+        } catch {}
+        if (!photos.length) return dlg.close();
+        index = Math.min(index, photos.length - 1);
+        show();
+      });
+    }
+  });
+  dlg.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft") go(-1);
+    if (e.key === "ArrowRight") go(1);
+  });
+  let touchX = null;
+  img.addEventListener("touchstart", (e) => (touchX = e.touches[0].clientX), { passive: true });
+  img.addEventListener("touchend", (e) => {
+    if (touchX === null) return;
+    const dx = e.changedTouches[0].clientX - touchX;
+    touchX = null;
+    if (Math.abs(dx) > 40) go(dx < 0 ? 1 : -1);
+  });
+  show();
+  dlg.showModal();
 }
 
 // ---------- live updates ----------
