@@ -71,6 +71,8 @@ last time you opened it (kept in the browser next to the guest token). It is bui
 comments the page already polls every 8 seconds, so there is no separate notifications table,
 and a toast pops up when something new arrives while the page is open. No phone push yet.
 
+"Répondre" quotes the comment above the text box; the reply is stored with a first `[reply:ID]` line, shown as a quote you can tap to jump to the original, and notifies its author in the 🔔.
+
 GIF search goes through the Worker (`GET /api/parties/:id/gifs?q=`) so the key stays secret.
 Setup: create an app at <https://developers.giphy.com/dashboard/> (API, not SDK) and set its
 key as the Worker secret `GIPHY_API_KEY`. Without it the GIF button is hidden. A free key
