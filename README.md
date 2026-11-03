@@ -64,6 +64,12 @@ send GIFs. A tagged guest sees that comment highlighted. Everything lives in the
 `comments.body` text: a GIF is stored as a `[gif:ID]` line and shown from media.giphy.com.
 No database change.
 
+Guests can ❤️ a comment (table `comment_likes`, migration 0006). The 🔔 on the event page
+lists who liked your comments or tagged you, with a red count for anything newer than the
+last time you opened it (kept in the browser next to the guest token). It is built from the
+comments the page already polls every 8 seconds, so there is no separate notifications table,
+and a toast pops up when something new arrives while the page is open. No phone push yet.
+
 GIF search goes through the Worker (`GET /api/parties/:id/gifs?q=`) so the key stays secret.
 Setup: create an app at <https://developers.giphy.com/dashboard/> (API, not SDK) and set its
 key as the Worker secret `GIPHY_API_KEY`. Without it the GIF button is hidden. A free key

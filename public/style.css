@@ -434,3 +434,28 @@ body.has-bg .card {
 .guest-chip { all: unset; display: inline-flex; align-items: center; gap: 6px; padding: 3px 12px 3px 3px; cursor: pointer; border-radius: 999px; }
 .guest-chip:focus-visible { outline: 2px solid var(--accent); }
 .emoji-panel[hidden], .gif-panel[hidden], .mention-list[hidden] { display: none; }
+
+/* Likes */
+.comment-foot { display: flex; align-items: center; gap: 8px; margin-top: 4px; min-width: 0; }
+.like { border: none; background: none; padding: 2px 6px; margin-left: -6px; border-radius: 999px; font-size: 0.95rem; line-height: 1.2; color: var(--muted); }
+.like span { font-size: 0.85rem; font-weight: 600; }
+.like.on { color: var(--accent); }
+.like:hover { background: var(--accent-soft); }
+.likers { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.comments li.flash { animation: flash 1.6s ease-out; }
+@keyframes flash { 0%, 30% { box-shadow: 0 0 0 3px var(--accent); } 100% { box-shadow: 0 0 0 0 transparent; } }
+
+/* Notifications bell */
+.topbar-right { display: flex; align-items: center; gap: 8px; }
+.bell { position: relative; width: 38px; height: 38px; padding: 0; border-radius: 999px; font-size: 1.1rem; display: grid; place-items: center; }
+.bell[aria-expanded="true"] { background: var(--accent-soft); border-color: var(--accent); }
+.bell-count { position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 999px; background: #e11d48; color: #fff; font-size: 0.7rem; font-weight: 700; line-height: 18px; text-align: center; }
+.bell-count[hidden], .notif-panel[hidden] { display: none; }
+.notif-panel { margin-top: 8px; }
+.notif-panel h2 { margin-top: 0; }
+.notifs { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; max-height: 360px; overflow-y: auto; }
+.notifs button { display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left; border: none; background: none; padding: 8px; border-radius: 10px; color: inherit; font-weight: 400; line-height: 1.35; }
+.notifs .avatar { flex: none; }
+.notifs .notif-text { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+.notifs li.unread button { background: var(--accent-soft); }
+.notifs button:hover { background: var(--accent-soft); }

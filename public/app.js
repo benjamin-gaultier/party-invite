@@ -581,7 +581,8 @@ function renderSpace(eventId, data) {
       : "";
 
   app.innerHTML = `
-    <nav class="topbar"><a href="/mes-evenements">← Mes événements</a><span class="hello">${avatar(me.name, "sm")} Salut ${esc(me.name)} 👋</span></nav>
+    <nav class="topbar"><a href="/mes-evenements">← Mes événements</a><span class="topbar-right"><span class="hello">${avatar(me.name, "sm")} Salut ${esc(me.name)} 👋</span><button class="bell" id="bell" aria-expanded="false" aria-label="Notifications">🔔<span class="bell-count" id="bell-count" hidden></span></button></span></nav>
+    <div class="notif-panel card" id="notif-panel" hidden></div>
 
     ${eventHero(
       eventId,
@@ -980,9 +981,92 @@ function setupComments(eventId, me, initial, token, guests) {
   // Everyone we can tag: guests, plus authors of comments (in case someone joined since).
   const people = new Map(guests.map((g) => [g.id, g.name]));
 
+  // ----- in-app notifications: who liked my comments or tagged me -----
+  // Built from the comments we already poll. "Seen" is the newest server timestamp the
+  // guest has looked at, kept in this browser with their identity.
+  const bell = document.getElementById("bell");
+  const bellCount = document.getElementById("bell-count");
+  const panel = document.getElementById("notif-panel");
+  const baseTitle = document.title;
+  let notifs = [];
+  let initialNotifs = true;
+  let lastNewest = "";
+
+  const snippet = (body) => {
+    const { text, gifs } = parseComment(body);
+    const t = text.length > 60 ? text.slice(0, 57) + "…" : text;
+    return t || (gifs.length ? "GIF" : "");
+  };
+
+  function updateNotifications(comments) {
+    const list = [];
+    for (const c of comments) {
+      if (c.guestId === me.id) {
+        for (const l of c.likes || []) {
+          if (l.guestId !== me.id) list.push({ kind: "like", from: l.name, at: l.at, id: c.id, text: snippet(c.body) });
+        }
+      } else if (mentionsMe(parseComment(c.body).text, me.name)) {
+        list.push({ kind: "mention", from: c.name, at: c.createdAt, id: c.id, text: snippet(c.body) });
+      }
+    }
+    notifs = list.sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, 30);
+    const seen = getIdentity(eventId)?.notifSeen || "";
+    const unread = notifs.filter((n) => n.at > seen);
+    bellCount.hidden = !unread.length;
+    bellCount.textContent = unread.length > 9 ? "9+" : String(unread.length);
+    document.title = unread.length ? `(${unread.length}) ${baseTitle}` : baseTitle;
+    // Something new arrived while the page was open: say so.
+    const newest = notifs[0]?.at || "";
+    if (!initialNotifs && newest > lastNewest && unread.length && unread[0].at > lastNewest) toast(notifText(unread[0]), 4000);
+    lastNewest = newest > lastNewest ? newest : lastNewest;
+    if (!panel.hidden) drawPanel(seen);
+  }
+
+  const notifText = (n) => (n.kind === "like" ? `❤️ ${n.from} a aimé votre commentaire` : `💬 ${n.from} vous a tagué·e`);
+
+  function drawPanel(seen) {
+    panel.innerHTML = `<h2>Notifications</h2>${
+      notifs.length
+        ? `<ul class="notifs">${notifs
+            .map(
+              (n) => `<li class="${n.at > seen ? "unread" : ""}"><button data-goto="${esc(n.id)}">
+                ${avatar(n.from, "sm")}
+                <span class="notif-text"><span><strong>${esc(n.from)}</strong> ${n.kind === "like" ? "a aimé votre commentaire" : "vous a tagué·e"}${n.text ? ` : « ${esc(n.text)} »` : ""}</span>
+                <span class="muted small">${esc(formatAgo(n.at))}</span></span>
+              </button></li>`,
+            )
+            .join("")}</ul>`
+        : `<p class="muted small">Rien pour l'instant. Quand quelqu'un aime votre commentaire ou vous tague avec @${esc(me.name)}, ça s'affichera ici.</p>`
+    }`;
+  }
+
+  const setPanel = (open) => {
+    panel.hidden = !open;
+    bell.setAttribute("aria-expanded", String(open));
+    if (!open) return;
+    drawPanel(getIdentity(eventId)?.notifSeen || "");
+    // Opening the bell marks everything as read.
+    if (notifs[0]) setIdentity(eventId, { notifSeen: notifs[0].at });
+    bellCount.hidden = true;
+    document.title = baseTitle;
+  };
+  bell.addEventListener("click", () => setPanel(panel.hidden));
+  panel.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-goto]");
+    if (!btn) return;
+    setPanel(false);
+    const li = document.getElementById(`c-${btn.dataset.goto}`);
+    if (!li) return;
+    li.scrollIntoView({ block: "center", behavior: "smooth" });
+    li.classList.remove("flash");
+    void li.offsetWidth;
+    li.classList.add("flash");
+  });
+
   const draw = (comments) => {
     for (const c of comments) people.set(c.guestId, c.name);
-    const key = comments.map((c) => c.id + c.name).join();
+    updateNotifications(comments);
+    const key = comments.map((c) => c.id + c.name + (c.likes || []).map((l) => l.guestId).join("+")).join();
     if (key === lastKey) {
       // Same comments: just refresh the "x min ago" labels.
       for (const el of list.querySelectorAll("[data-at]")) el.textContent = formatAgo(el.dataset.at);
@@ -997,7 +1081,10 @@ function setupComments(eventId, me, initial, token, guests) {
             const { text, gifs } = parseComment(c.body);
             const mine = c.guestId === me.id;
             const tagged = !mine && mentionsMe(text, me.name);
-            return `<li class="${mine ? "mine" : ""} ${tagged ? "tagged" : ""}">
+            const likes = c.likes || [];
+            const liked = likes.some((l) => l.guestId === me.id);
+            const likers = likes.map((l) => (l.guestId === me.id ? "Vous" : l.name)).join(", ");
+            return `<li id="c-${esc(c.id)}" class="${mine ? "mine" : ""} ${tagged ? "tagged" : ""}">
               ${avatar(c.name)}
               <div class="comment-body">
                 <div class="comment-meta"><strong>${esc(c.name)}</strong>
@@ -1009,6 +1096,10 @@ function setupComments(eventId, me, initial, token, guests) {
                 </div>
                 ${text ? `<p>${formatCommentText(text, names, me.name)}</p>` : ""}
                 ${gifs.map((id) => `<img class="comment-gif" src="${gifUrl(id)}" alt="GIF" loading="lazy">`).join("")}
+                <div class="comment-foot">
+                  <button class="like ${liked ? "on" : ""}" data-like="${esc(c.id)}" aria-pressed="${liked}" aria-label="${liked ? "Je n'aime plus" : "J'aime"}">${liked ? "❤️" : "🤍"}${likes.length ? ` <span>${likes.length}</span>` : ""}</button>
+                  ${likes.length ? `<span class="muted small likers">${esc(likers)}</span>` : ""}
+                </div>
               </div></li>`;
           })
           .join("")
@@ -1017,6 +1108,7 @@ function setupComments(eventId, me, initial, token, guests) {
     list.dataset.ready = "1";
   };
   draw(initial);
+  initialNotifs = false;
 
   // GIFs load after the list is drawn: keep the newest comment in view if we were at the bottom.
   let stickToBottom = true;
@@ -1065,6 +1157,13 @@ function setupComments(eventId, me, initial, token, guests) {
   list.addEventListener("click", async (ev) => {
     const replyBtn = ev.target.closest("[data-reply]");
     if (replyBtn) return reply(replyBtn.dataset.reply);
+    const likeBtn = ev.target.closest("[data-like]");
+    if (likeBtn) {
+      const liked = likeBtn.getAttribute("aria-pressed") !== "true";
+      return withBusy(likeBtn, async () => {
+        draw((await api(`/parties/${eventId}/comments/${likeBtn.dataset.like}/like`, { method: "PUT", body: { liked }, token })).comments);
+      });
+    }
     const btn = ev.target.closest("[data-delete]");
     if (!btn || !confirm("Supprimer ce commentaire ?")) return;
     withBusy(btn, async () => {
