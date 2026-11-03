@@ -762,7 +762,7 @@ body.light-ui .bubble .author { color: hsl(var(--hue) 60% 38%); }
 @container (max-width: 260px) {
   .rsvp { grid-template-columns: 1fr; }
   .rsvp button { min-height: 48px; }
-  h2 { font-size: 1.1rem; padding-right: 38px; }
+  h2 { font-size: 1.1rem; }
   .guests li { font-size: 0.85rem; }
   .composer-bar { flex-wrap: wrap; }
   .photo-grid { grid-template-columns: repeat(2, 1fr); }
@@ -778,3 +778,83 @@ body.light-ui .bubble .author { color: hsl(var(--hue) 60% 38%); }
 .card-layout-row .move:disabled { opacity: 0.35; cursor: default; }
 .half-hint { margin: 0; padding: 10px 12px; border-radius: 12px; background: var(--accent-soft); color: var(--text); }
 .half-hint[hidden] { display: none; }
+
+/* ---------- Icons (inline SVG, no emojis in the interface) ---------- */
+.icon { width: 1.15em; height: 1.15em; flex: none; vertical-align: -0.2em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+h2 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+h2 > .icon { color: var(--accent); width: 1.05em; height: 1.05em; }
+legend .icon { color: var(--accent); }
+.hero-icon { width: 64px; height: 64px; margin: 0 auto 12px; border-radius: 20px; display: grid; place-items: center; background: var(--accent); color: var(--accent-text); }
+.hero-icon .icon { width: 32px; height: 32px; }
+.hero-when, .hero-theme, .hero-invite { display: inline-flex; align-items: center; gap: 8px; }
+.going-line, .event-link .small { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.event-link .small { justify-content: flex-start; }
+button .icon, .btn .icon { vertical-align: -0.2em; }
+.bg-fab, .pv-btn, .sheet-item, .remove-guest, #delete-event, #photo-add { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.sheet-item { justify-content: flex-start; }
+.sheet-item span { display: grid; place-items: center; }
+.composer-bar .tool .icon, .bell .icon { width: 20px; height: 20px; }
+.bell { color: var(--text); }
+.pinned-label, .reply-label > span:first-child { display: inline-flex; align-items: center; gap: 6px; }
+.pinned-label .icon, .reply-label .icon, .stamp .icon { width: 0.95em; height: 0.95em; }
+.swipe-reply .icon { width: 22px; height: 22px; color: var(--accent); }
+.attachment button .icon { width: 12px; height: 12px; }
+.tracks .cover .icon { color: var(--accent); }
+.card p.muted .icon { vertical-align: -0.18em; margin-right: 2px; }
+
+/* RSVP: icon above label in narrow tiles, inline otherwise */
+.rsvp button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; line-height: 1.15; }
+.rsvp button .icon { width: 18px; height: 18px; }
+
+/* Address card */
+.event-info { display: flex; flex-direction: column; gap: 12px; }
+.card.event-info > * + * { margin-top: 0; }
+.place { display: flex; align-items: center; gap: 12px; color: var(--text); text-decoration: none; min-width: 0; }
+.place-icon { width: 44px; height: 44px; flex: none; border-radius: 14px; display: grid; place-items: center; background: var(--accent); color: var(--accent-text); }
+.place-icon .icon { width: 22px; height: 22px; }
+.place-text { display: flex; flex-direction: column; min-width: 0; }
+.place-label { font-size: 0.8rem; font-weight: 600; color: var(--muted); }
+.place-name { font-weight: 700; font-size: 1.05rem; line-height: 1.25; overflow-wrap: anywhere; }
+.place-go { display: inline-flex; align-items: center; justify-content: center; gap: 8px; align-self: flex-start; padding: 10px 16px; min-height: 44px; }
+.event-info .description { margin: 0; }
+.edit-details { display: inline-flex; align-items: center; gap: 8px; align-self: flex-start; padding: 8px 14px; min-height: 40px; border-radius: 999px; font-size: 0.9rem; font-weight: 600; color: var(--muted); background: transparent; box-shadow: inset 0 0 0 1.5px var(--border); }
+.edit-details:hover { color: var(--text); }
+.event-info .edit-details { margin-top: auto; }
+
+/* Host "Aa" button: keep it off the card's first line */
+[data-card]:has(> .card-edit) > :first-child { padding-right: 40px; }
+.card-edit { width: 32px; height: 32px; min-height: 0; top: 12px; right: 12px; font-family: var(--display); font-weight: 800; font-size: 0.8rem; background: var(--fill, var(--bg)); border: none; opacity: 0.9; }
+.event-hero .card-edit { top: 14px; right: 14px; }
+
+/* Narrow (half-width) tiles: every card stays readable */
+@container (max-width: 260px) {
+  .card { padding: 16px; }
+  h2 { font-size: 1.05rem; padding-right: 0; gap: 6px; }
+  .rsvp button { flex-direction: row; justify-content: flex-start; text-align: left; padding: 10px 12px; min-height: 44px; font-size: 0.9rem; }
+  .place { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .place-go, .edit-details { align-self: stretch; }
+  .guests { gap: 4px; }
+  .guests li, .guest-chip { font-size: 0.85rem; max-width: 100%; }
+  .guest-chip, .guests li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge { display: none; }
+  .comments { max-height: 360px; }
+  .comments li.comment > .avatar { display: none; }
+  .bubble-wrap, .mine .bubble-wrap { max-width: calc(100% - 14px); }
+  .more-btn { position: absolute; top: -2px; right: -6px; width: 24px; height: 24px; min-height: 0; font-size: 0.95rem; z-index: 2; }
+  .mine .more-btn { right: auto; left: -6px; }
+  .card-edit { width: 26px; height: 26px; top: 8px; right: 8px; font-size: 0.7rem; }
+  [data-card]:has(> .card-edit) > :first-child { padding-right: 22px; }
+  #photo-add { font-size: 0.9rem; padding: 10px 12px; }
+  #photo-add .icon { display: none; }
+  .edit-details { font-size: 0.85rem; justify-content: center; }
+  .composer-bar { flex-wrap: wrap; gap: 6px; }
+  .composer-bar .tool { width: 36px; height: 36px; min-height: 0; }
+  .composer-bar .primary { margin-left: 0; flex: 1 0 100%; }
+  .comments-hint { display: none; }
+  .photo-grid { grid-template-columns: repeat(2, 1fr); }
+  #photo-add { align-self: stretch; width: 100%; }
+  .photo-add { flex-direction: column; align-items: stretch; }
+  .tracks li { gap: 8px; }
+  .track-side { display: none; }
+  iframe.spotify { height: 152px; }
+}

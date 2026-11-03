@@ -90,13 +90,13 @@ function formatWhen(date, time) {
   return `${day} · ${t}`;
 }
 
-// "J-12", "Demain !", "C'est aujourd'hui 🎉", or how long ago.
+// "J-12", "Demain !", "C'est aujourd'hui", or how long ago.
 function countdown(date) {
   if (!date) return "";
   const [y, m, d] = date.split("-").map(Number);
   const today = new Date();
   const days = Math.round((new Date(y, m - 1, d) - new Date(today.getFullYear(), today.getMonth(), today.getDate())) / 86400000);
-  if (days === 0) return "C'est aujourd'hui 🎉";
+  if (days === 0) return "C'est aujourd'hui";
   if (days === 1) return "Demain !";
   if (days > 1) return `J-${days}`;
   if (days === -1) return "C'était hier";
@@ -104,6 +104,42 @@ function countdown(date) {
 }
 
 // Colored initials bubble, same color for the same name everywhere.
+// ---------- icons ----------
+// The interface uses these inline SVG icons (Lucide-style strokes), never emojis.
+// Emojis only appear in what people write: comments, reactions, the emoji picker.
+const ICONS = {
+  calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+  pin: '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/>',
+  route: '<path d="M3 11 22 2l-9 19-2-8-8-2z"/>',
+  pencil: '<path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/>',
+  sparkles: '<path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/>',
+  music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+  mail: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+  crown: '<path d="m2 6 4 11h12l4-11-6 5-4-7-4 7-6-5Z"/><path d="M6 21h12"/>',
+  message: '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>',
+  smile: '<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/>',
+  camera: '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>',
+  palette: '<path d="M12 2a10 10 0 0 0 0 20c.9 0 1.7-.8 1.7-1.7 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1 0-.9.8-1.7 1.7-1.7h2c3 0 5.5-2.5 5.5-5.5C22 6 17.5 2 12 2z"/><circle cx="7.5" cy="10.5" r="1"/><circle cx="10.5" cy="6.5" r="1"/><circle cx="15.5" cy="7.5" r="1"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  help: '<circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/>',
+  trash: '<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
+  lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  reply: '<path d="M9 17 4 12l5-5"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/>',
+  pinned: '<path d="M12 17v5M9 10.8a2 2 0 0 1-1.1 1.8l-1.8.9A2 2 0 0 0 5 15.2v.8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.8a2 2 0 0 0-1.1-1.8l-1.8-.9a2 2 0 0 1-1.1-1.8V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>',
+  copy: '<rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  party: '<path d="M5.8 11.3 2 22l10.7-3.8"/><path d="M11 13c1.9 1.9 2.8 4.2 2 5-.8.8-3.1-.1-5-2s-2.8-4.2-2-5c.8-.8 3.1.1 5 2Z"/><path d="M4 3h.01M22 8h.01M15 2h.01M22 20h.01M22 2l-2.2.8a2.9 2.9 0 0 0-2 3.1c.1.9-.6 1.6-1.4 1.6H16c-.9 0-1.6.6-1.8 1.4L14 10M22 13l-.8-.3c-.9-.3-1.8.2-2 1.1-.1.7-.7 1.2-1.4 1.2H17M11 2l.3.8c.3.9-.2 1.8-1.1 2-.7.1-1.2.7-1.2 1.4V7"/>',
+};
+function icon(name, cls = "") {
+  return `<svg class="icon ${cls}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICONS[name] || ""}</svg>`;
+}
+
 function avatar(name, size = "") {
   const clean = String(name || "?").trim();
   const initials = clean
@@ -157,8 +193,8 @@ function eventHero(eventId, ev, extra = "") {
         ${ev.date ? `<span class="chip">${esc(countdown(ev.date))}</span>` : ""}
         ${extra}
         <h1>${esc(ev.title)}</h1>
-        <p class="hero-when">📅 ${esc(formatWhen(ev.date, ev.time))}</p>
-        ${ev.theme ? `<p class="hero-theme">🎭 ${esc(ev.theme)}</p>` : ""}
+        <p class="hero-when">${icon("calendar")} ${esc(formatWhen(ev.date, ev.time))}</p>
+        ${ev.theme ? `<p class="hero-theme">${icon("sparkles")} ${esc(ev.theme)}</p>` : ""}
       </div>
     </header>`;
 }
@@ -222,16 +258,16 @@ async function withBusy(button, fn) {
 function extraFields(event = {}) {
   return `
       <label>Thème / dress code <span class="muted">(facultatif)</span>
-        <input name="theme" maxlength="200" placeholder="Les arrêts de métro de Paris 🚇" value="${esc(event.theme)}">
+        <input name="theme" maxlength="200" placeholder="Les arrêts de métro de Paris" value="${esc(event.theme)}">
       </label>
       <fieldset class="stack">
-        <legend>🎵 Playlist <span class="muted">(facultatif)</span></legend>
+        <legend>${icon("music")} Playlist <span class="muted">(facultatif)</span></legend>
         <label>Lien de la playlist Spotify
           <input name="playlist_url" type="url" maxlength="500" inputmode="url" placeholder="https://open.spotify.com/playlist/…" value="${esc(event.playlist_url)}">
         </label>
         <p class="muted small hint">Astuce : dans Spotify, ouvrez la playlist → ⋯ → <em>Inviter des collaborateurs</em> et collez ce lien, pour que les invités puissent ajouter des chansons.</p>
         <label>Message pour les invités
-          <input name="playlist_note" maxlength="300" placeholder="Ajoutez vos chansons françaises préférées 🇫🇷" value="${esc(event.playlist_note)}">
+          <input name="playlist_note" maxlength="300" placeholder="Ajoutez vos chansons françaises préférées" value="${esc(event.playlist_note)}">
         </label>
       </fieldset>`;
 }
@@ -654,7 +690,7 @@ function setupBackgroundControl(eventId, token) {
         renderSpace(eventId, await uploadBackground(eventId, token, await resizeImage(file)));
         toast("Image de fond mise à jour");
       } finally {
-        change.textContent = "🖼️ Changer le fond";
+        change.innerHTML = `${icon("image")} Changer le fond`;
       }
     });
   });
@@ -678,16 +714,16 @@ function renderHome() {
   const count = Object.keys(store.events).length;
 
   app.innerHTML = `
-    ${count ? `<nav class="topbar"><span></span><a href="/mes-evenements">📅 Mes événements <span class="count">${count}</span></a></nav>` : ""}
+    ${count ? `<nav class="topbar"><span></span><a href="/mes-evenements">${icon("calendar")} Mes événements <span class="count">${count}</span></a></nav>` : ""}
     <header class="hero">
-      <div class="emoji">🎉</div>
+      <div class="hero-icon">${icon("party")}</div>
       <h1>Organisez une soirée</h1>
       <p class="muted">Créez un événement, partagez un lien. Les invités rejoignent avec leur prénom, sans appli ni compte.</p>
     </header>
 
     <form id="create" class="card stack" autocomplete="off">
       <label>C'est quoi l'occasion ?
-        <input name="title" required maxlength="120" placeholder="L'anniversaire de Banu 🎂">
+        <input name="title" required maxlength="120" placeholder="L'anniversaire de Banu">
       </label>
       <div class="row">
         <label>Date <input name="date" type="date" required min="${today}"></label>
@@ -742,8 +778,8 @@ function renderMine() {
     const item = (e) => `<li><a class="event-link ${e.date && e.date < today ? "past" : ""}" href="/e/${esc(e.id)}">
         <strong>${esc(e.title || "Événement sans titre")}</strong>
         <span class="muted small">${esc(formatWhen(e.date, e.time))}${e.date && e.date >= today ? ` · ${esc(countdown(e.date))}` : ""}</span>
-        ${e.going ? `<span class="muted small">🥳 ${e.going} ${e.going > 1 ? "viennent" : "vient"}</span>` : ""}
-        ${!e.isHost && e.rsvp ? `<span class="small">${RSVP_EMOJI[e.rsvp]} ${RSVP_LABELS[e.rsvp]}</span>` : ""}
+        ${e.going ? `<span class="muted small">${icon("users")} ${e.going} ${e.going > 1 ? "viennent" : "vient"}</span>` : ""}
+        ${!e.isHost && e.rsvp ? `<span class="small">${icon(RSVP_ICON[e.rsvp])} ${RSVP_LABELS[e.rsvp]}</span>` : ""}
       </a></li>`;
     // Upcoming first (soonest on top), then past events (most recent on top).
     const ordered = (list) => [...list.filter((e) => !e.date || e.date >= today), ...list.filter((e) => e.date && e.date < today).reverse()];
@@ -753,11 +789,11 @@ function renderMine() {
       </section>`;
     app.innerHTML = `
       <nav class="topbar"><a href="/">← Créer un événement</a></nav>
-      <header class="hero"><div class="emoji">📅</div><h1>Mes événements</h1>
+      <header class="hero"><div class="hero-icon">${icon("calendar")}</div><h1>Mes événements</h1>
         <p class="muted small">Les événements que vous avez ouverts dans ce navigateur.</p></header>
       ${offline ? `<p class="muted small center">Hors ligne : liste enregistrée sur cet appareil.</p>` : ""}
-      ${section("👑 J'organise", sorted.filter((e) => e.isHost), `Aucun pour l'instant. <a href="/">Créez un événement</a> !`)}
-      ${section("💌 Je suis invité·e", sorted.filter((e) => !e.isHost), "Quand quelqu'un vous envoie un lien et que vous le rejoignez, il apparaîtra ici.")}
+      ${section(`${icon("crown")} J'organise`, sorted.filter((e) => e.isHost), `Aucun pour l'instant. <a href="/">Créez un événement</a> !`)}
+      ${section(`${icon("mail")} Je suis invité·e`, sorted.filter((e) => !e.isHost), "Quand quelqu'un vous envoie un lien et que vous le rejoignez, il apparaîtra ici.")}
     `;
   };
 
@@ -808,9 +844,9 @@ function renderJoin(eventId, preview) {
     ${eventHero(
       eventId,
       preview,
-      `<p class="hero-invite">💌 ${preview.hostName ? `${esc(preview.hostName)} vous ${preview.hostName.includes(" et ") ? "invitent" : "invite"} à` : "Vous êtes invité·e à"}</p>`,
+      `<p class="hero-invite">${icon("mail")} ${preview.hostName ? `${esc(preview.hostName)} vous ${preview.hostName.includes(" et ") ? "invitent" : "invite"} à` : "Vous êtes invité·e à"}</p>`,
     )}
-    ${preview.going ? `<p class="center muted small going-line">🥳 ${preview.going} ${preview.going > 1 ? "personnes viennent" : "personne vient"} déjà</p>` : ""}
+    ${preview.going ? `<p class="center muted small going-line">${icon("users")} ${preview.going} ${preview.going > 1 ? "personnes viennent" : "personne vient"} déjà</p>` : ""}
     <form id="join" class="card stack" autocomplete="off">
       <label>Comment vous appelez-vous ?
         <input name="name" required maxlength="40" placeholder="Votre prénom" value="${esc(store.lastName)}" autofocus>
@@ -832,7 +868,7 @@ function renderJoin(eventId, preview) {
 }
 
 const RSVP_LABELS = { going: "Je viens", maybe: "Peut-être", not_going: "Je ne peux pas" };
-const RSVP_EMOJI = { going: "🥳", maybe: "🤔", not_going: "😢" };
+const RSVP_ICON = { going: "check", maybe: "help", not_going: "x" };
 
 // Marks a rendered block so live updates can swap it on its own (see patchSpace).
 function live(key, html) {
@@ -881,7 +917,7 @@ function spaceHtml(eventId, data, identity) {
   const style = parseStyle(event.color);
 
   return `
-    <nav class="topbar"><a href="/mes-evenements">← Mes événements</a><span class="topbar-right"><span class="hello">${avatar(me.name, "sm")} Salut ${esc(me.name)} 👋</span><button class="bell" id="bell" aria-expanded="false" aria-label="Notifications">🔔<span class="bell-count" id="bell-count" hidden></span></button></span></nav>
+    <nav class="topbar"><a href="/mes-evenements">← Mes événements</a><span class="topbar-right"><span class="hello">${avatar(me.name, "sm")} Salut ${esc(me.name)}</span><button class="bell" id="bell" aria-expanded="false" aria-label="Notifications">${icon("bell")}<span class="bell-count" id="bell-count" hidden></span></button></span></nav>
     <div class="notif-panel card" id="notif-panel" hidden></div>
 
     ${live("hero", eventHero(
@@ -895,14 +931,14 @@ function spaceHtml(eventId, data, identity) {
     ${
       me.isHost
         ? `<section class="card share ${identity?.justCreated ? "highlight" : ""}">
-            <h2>${identity?.justCreated ? "Votre événement est en ligne ! 🎉" : "Invitez du monde"}</h2>
+            <h2>${identity?.justCreated ? "Votre événement est en ligne&nbsp;!" : "Invitez du monde"}</h2>
             <p class="muted small">Toute personne ayant ce lien peut rejoindre.</p>
             <div class="share-row">
               <input readonly value="${esc(shareUrl(eventId))}" id="share-url">
               <button id="copy">Copier</button>
             </div>
             <div class="share-buttons">
-              <a class="btn whatsapp" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(`${event.title} 🎉 ${shareUrl(eventId)}`)}">WhatsApp</a>
+              <a class="btn whatsapp" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(`${event.title} ${shareUrl(eventId)}`)}">WhatsApp</a>
               <button id="native-share" hidden>Partager…</button>
             </div>
           </section>`
@@ -912,32 +948,40 @@ function spaceHtml(eventId, data, identity) {
     ${
       event.address || event.description || me.isHost
         ? `<section data-live="info" data-card="info" class="card event-info">
-            ${event.address ? `<p class="address">📍 <a href="${mapsUrl(event.address)}" target="_blank" rel="noopener">${esc(event.address)}</a></p>` : ""}
+            ${
+              event.address
+                ? `<a class="place" href="${mapsUrl(event.address)}" target="_blank" rel="noopener">
+                    <span class="place-icon">${icon("pin")}</span>
+                    <span class="place-text"><span class="place-label">Adresse</span><span class="place-name">${esc(event.address)}</span></span>
+                  </a>
+                  <a class="btn place-go" href="${mapsUrl(event.address)}" target="_blank" rel="noopener">${icon("route")} Itinéraire</a>`
+                : ""
+            }
             ${event.description ? `<p class="description">${esc(event.description)}</p>` : ""}
-            ${me.isHost ? `<button class="link" id="edit">✏️ Modifier les détails</button>` : ""}
+            ${me.isHost ? `<button class="edit-details" id="edit">${icon("pencil")} Modifier les détails</button>` : ""}
           </section>`
         : ""
     }
 
     <section data-live="rsvp" data-card="rsvp" class="card">
-      <h2>Vous venez ?</h2>
+      <h2>Vous venez&nbsp;?</h2>
       <div class="rsvp">
         ${Object.entries(RSVP_LABELS)
           .map(
             ([key, label]) =>
-              `<button data-rsvp="${key}" class="${me.rsvp === key ? "selected" : ""}">${RSVP_EMOJI[key]} ${label}</button>`,
+              `<button data-rsvp="${key}" class="${me.rsvp === key ? "selected" : ""}">${icon(RSVP_ICON[key])} <span>${label}</span></button>`,
           )
           .join("")}
       </div>
     </section>
 
     <section data-live="guests" data-card="guests" class="card">
-      <h2>Invités <span class="count">${guests.length}</span></h2>
+      <h2>${icon("users")} Invités <span class="count">${guests.length}</span></h2>
       ${guestList("going", "Viennent")}
       ${guestList("maybe", "Peut-être")}
       ${guestList("not_going", "Ne viennent pas")}
       ${guestList("none", "Pas encore répondu")}
-      ${me.isHost && guests.length > 1 ? `<p class="muted small">👑 Touchez un invité pour en faire un co-hôte, ou pour retirer un doublon.</p>` : ""}
+      ${me.isHost && guests.length > 1 ? `<p class="muted small">${icon("crown")} Touchez un invité pour en faire un co-hôte, ou pour retirer un doublon.</p>` : ""}
     </section>
 
     ${live("music", musicSection(event, me, data.spotify))}
@@ -945,7 +989,7 @@ function spaceHtml(eventId, data, identity) {
     ${live("photos", photosSection(eventId, event, me, data.photos))}
 
     <section data-card="comments" class="card">
-      <h2>💬 Commentaires</h2>
+      <h2>${icon("message")} Commentaires</h2>
       <div id="pinned"></div>
       <ul class="comments" id="comments"></ul>
       <p class="muted small comments-hint">${matchMedia("(pointer: coarse)").matches ? "Appui long sur un message pour réagir · glissez-le vers la droite pour répondre" : "Survolez un message et cliquez sur ⋯ (ou clic droit) pour réagir ou répondre"}</p>
@@ -955,10 +999,10 @@ function spaceHtml(eventId, data, identity) {
         <div class="attachments" id="attachments" hidden></div>
         <div class="comment-input" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Votre commentaire" data-placeholder="Écrivez un mot… (@ pour taguer quelqu'un)"></div>
         <div class="composer-bar">
-          <button type="button" class="tool" id="emoji-open" aria-expanded="false" aria-label="Ajouter un emoji" title="Emojis">😊</button>
+          <button type="button" class="tool" id="emoji-open" aria-expanded="false" aria-label="Ajouter un emoji" title="Emojis">${icon("smile")}</button>
           ${data.gifs ? `<button type="button" class="tool gif-tool" id="gif-open" aria-expanded="false" aria-label="Ajouter un GIF" title="GIFs">GIF</button>` : ""}
           <button type="button" class="tool" id="mention-open" aria-label="Taguer quelqu'un" title="Taguer quelqu'un">@</button>
-          ${data.pictures ? `<button type="button" class="tool" id="pic-open" aria-label="Ajouter une photo ou un GIF" title="Photo ou GIF du téléphone">📷</button><input type="file" id="pic-file" accept="image/*" multiple hidden>` : ""}
+          ${data.pictures ? `<button type="button" class="tool" id="pic-open" aria-label="Ajouter une photo ou un GIF" title="Photo ou GIF du téléphone">${icon("camera")}</button><input type="file" id="pic-file" accept="image/*" multiple hidden>` : ""}
           <button class="primary" type="submit">Envoyer</button>
         </div>
         <div class="emoji-panel" id="emoji-panel" hidden>
@@ -1041,9 +1085,9 @@ function spaceHtml(eventId, data, identity) {
             </div>
           </div>
           <div class="bg-control">
-            <button class="bg-fab" id="color-open" aria-expanded="false">🎨 Couleurs</button>
-            ${event.background_version ? `<button class="bg-fab" id="bg-remove" aria-label="Retirer l'image de fond" title="Retirer l'image de fond">✕</button>` : ""}
-            <button class="bg-fab" id="bg-change">🖼️ ${event.background_version ? "Changer le fond" : "Ajouter un fond"}</button>
+            <button class="bg-fab" id="color-open" aria-expanded="false">${icon("palette")} Couleurs</button>
+            ${event.background_version ? `<button class="bg-fab" id="bg-remove" aria-label="Retirer l'image de fond" title="Retirer l'image de fond">${icon("x")}</button>` : ""}
+            <button class="bg-fab" id="bg-change">${icon("image")} ${event.background_version ? "Changer le fond" : "Ajouter un fond"}</button>
             <input type="file" accept="image/*" id="bg-file" hidden>
           </div>`
         : ""
@@ -1116,7 +1160,7 @@ function bindFrame() {
     if (navigator.share) {
       native.hidden = false;
       native.addEventListener("click", () =>
-        navigator.share({ title: event.title, text: `${event.title} 🎉`, url: shareUrl(eventId) }).catch(() => {}),
+        navigator.share({ title: event.title, text: event.title, url: shareUrl(eventId) }).catch(() => {}),
       );
     }
   }
@@ -1130,7 +1174,7 @@ function guestMenu(eventId, guests, g, token) {
   dlg.className = "card guest-menu";
   dlg.innerHTML = `
     <h2>${avatar(g.name, "sm")} ${esc(g.name)}</h2>
-    <button data-act="host">${g.isHost ? "Retirer des hôtes" : "👑 Faire co-hôte"}</button>
+    <button data-act="host">${g.isHost ? "Retirer des hôtes" : `${icon("crown")} Faire co-hôte`}</button>
     <h3>Doublon ?</h3>
     <p class="muted small">Si ${esc(g.name)} est la même personne qu'un autre invité, fusionnez : ses commentaires, réactions, chansons, photos et sa réponse passent sur l'autre, et son lien continue de marcher.</p>
     <div class="merge-row">
@@ -1140,7 +1184,7 @@ function guestMenu(eventId, guests, g, token) {
       </select>
       <button class="primary" data-act="merge">Fusionner</button>
     </div>
-    <button class="link remove-guest" data-act="remove">🗑️ Retirer ${esc(g.name)} de l'événement</button>
+    <button class="link remove-guest" data-act="remove">${icon("trash")} Retirer ${esc(g.name)} de l'événement</button>
     <button class="link" data-act="close">Annuler</button>`;
   document.body.append(dlg);
   dlg.addEventListener("close", () => dlg.remove());
@@ -1161,7 +1205,7 @@ function guestMenu(eventId, guests, g, token) {
     if (!confirm(makeHost ? `Faire de ${g.name} un co-hôte ? Il pourra modifier l'événement, les couleurs et la playlist.` : `Retirer ${g.name} des hôtes ?`)) return;
     run(e.currentTarget, async () => {
       renderSpace(eventId, await api(`${path}/host`, { method: "PUT", body: { isHost: makeHost }, token }));
-      return makeHost ? `${g.name} est co-hôte 👑` : `${g.name} n'est plus hôte`;
+      return makeHost ? `${g.name} est co-hôte` : `${g.name} n'est plus hôte`;
     });
   });
   dlg.querySelector('[data-act="merge"]').addEventListener("click", (e) => {
@@ -1170,7 +1214,7 @@ function guestMenu(eventId, guests, g, token) {
     if (!confirm(`Fusionner ${g.name} dans ${into.name} ? ${g.name} disparaît de la liste.`)) return;
     run(e.currentTarget, async () => {
       renderSpace(eventId, await api(`${path}?into=${encodeURIComponent(into.id)}`, { method: "DELETE", token }));
-      return `${g.name} fusionné avec ${into.name} ✅`;
+      return `${g.name} fusionné avec ${into.name}`;
     });
   });
   dlg.querySelector('[data-act="remove"]').addEventListener("click", (e) => {
@@ -1192,11 +1236,11 @@ function musicSection(event, me, spotify = {}) {
       : spotify.enabled
         ? `<div class="connect-box"><p class="small">Connectez votre compte Spotify pour que les invités ajoutent des chansons directement ici, même sans Spotify.</p>
              <button class="spotify-btn" id="spotify-connect">Connecter Spotify</button></div>`
-        : `<p class="muted small">🔌 Ajout de chansons depuis l'appli : les clés Spotify ne sont pas encore configurées sur le serveur (visible par l'hôte seulement).</p>`;
+        : `<p class="muted small">${icon("info")} Ajout de chansons depuis l'appli : les clés Spotify ne sont pas encore configurées sur le serveur (visible par l'hôte seulement).</p>`;
 
   if (!event.playlist_url && !spotify.connected) {
     if (!host) return "";
-    return `<section data-card="music" class="card stack"><h2>🎵 Playlist</h2>
+    return `<section data-card="music" class="card stack"><h2>${icon("music")} Playlist</h2>
         ${
           spotify.enabled
             ? hostControls + `<p class="muted small center">ou <button class="link small" id="add-playlist">collez le lien d'une playlist</button></p>`
@@ -1208,12 +1252,12 @@ function musicSection(event, me, spotify = {}) {
   const embed = spotifyEmbed(event.playlist_url);
   const songs = spotify.songs || [];
   return `<section data-card="music" class="card music">
-      <h2>🎵 Playlist</h2>
+      <h2>${icon("music")} Playlist</h2>
       ${event.playlist_note ? `<p class="playlist-note">${esc(event.playlist_note)}</p>` : ""}
       ${
         spotify.connected
           ? `<form id="song-search" class="song-search" role="search" autocomplete="off">
-               <input name="q" type="search" maxlength="100" placeholder="🔎 Ajouter une chanson : titre ou artiste" enterkeyhint="search">
+               <input name="q" type="search" maxlength="100" placeholder="Ajouter une chanson : titre ou artiste" enterkeyhint="search">
              </form>
              <ul class="tracks" id="song-results"></ul>`
           : ""
@@ -1236,14 +1280,14 @@ function musicSection(event, me, spotify = {}) {
 
 function trackItem(t, right) {
   return `<li>
-      ${t.image ? `<img src="${esc(t.image)}" alt="" width="40" height="40" loading="lazy">` : `<span class="cover">🎵</span>`}
+      ${t.image ? `<img src="${esc(t.image)}" alt="" width="40" height="40" loading="lazy">` : `<span class="cover">${icon("music")}</span>`}
       <span class="track-text"><strong>${esc(t.title)}</strong><span class="muted small">${esc(t.artists)}</span></span>
       <span class="track-side">${right}</span>
     </li>`;
 }
 
 const SPOTIFY_RESULTS = {
-  connected: "Spotify est connecté 🎉 Les invités peuvent ajouter des chansons.",
+  connected: "Spotify est connecté. Les invités peuvent ajouter des chansons.",
   cancelled: "Connexion Spotify annulée.",
   not_owner: "Ce compte Spotify ne peut pas modifier la playlist de l'événement. Connectez le compte propriétaire, ou retirez le lien pour en créer une nouvelle.",
   not_allowed: "Ce compte Spotify n'est pas autorisé par l'appli Spotify (User Management).",
@@ -1329,7 +1373,7 @@ function setupMusic(eventId, data, token) {
     if (!btn) return;
     withBusy(btn, async () => {
       await api(`/parties/${eventId}/spotify/songs`, { method: "POST", body: { trackId: btn.dataset.track }, token });
-      toast("Ajoutée à la playlist 🎶");
+      toast("Ajoutée à la playlist");
       // Re-fetch so the song list (and the embedded player) show the new song.
       renderSpace(eventId, await api(`/parties/${eventId}`, { token }));
     });
@@ -1346,22 +1390,22 @@ const photoUrl = (eventId, id, extra = "") => `/api/parties/${eventId}/photos/${
 function photosSection(eventId, event, me, album) {
   if (!album?.enabled) {
     return me.isHost
-      ? `<section data-card="photos" class="card"><h2>📸 Photos</h2>
-           <p class="muted small">🔌 L'album photo n'est pas encore activé sur le serveur (visible par l'hôte seulement).</p></section>`
+      ? `<section data-card="photos" class="card"><h2>${icon("camera")} Photos</h2>
+           <p class="muted small">${icon("info")} L'album photo n'est pas encore activé sur le serveur (visible par l'hôte seulement).</p></section>`
       : "";
   }
   const photos = album.photos || [];
   const day = formatWhen(event.date).replace(/ \d{4}$/, "");
   return `<section data-card="photos" class="card photos">
-      <h2>📸 Photos ${photos.length ? `<span class="count">${photos.length}</span>` : ""}</h2>
+      <h2>${icon("camera")} Photos ${photos.length ? `<span class="count">${photos.length}</span>` : ""}</h2>
       ${
         album.canUpload
           ? `<div class="photo-add">
-               <button class="primary" id="photo-add">📷 Ajouter des photos</button>
+               <button class="primary" id="photo-add">${icon("camera")} Ajouter des photos</button>
                <input type="file" accept="image/*" multiple id="photo-file" hidden>
                <span class="muted small" id="photo-progress" aria-live="polite"></span>
              </div>`
-          : `<p class="muted small">🔒 L'album ouvre le jour de la fête (${esc(day)}). Revenez avec vos plus belles photos !</p>`
+          : `<p class="muted small">${icon("lock")} L'album ouvre le jour de la fête (${esc(day)}). Revenez avec vos plus belles photos !</p>`
       }
       ${
         photos.length
@@ -1446,7 +1490,7 @@ function setupPhotos(eventId, token) {
     box.disabled = true;
     try {
       const next = await api(`/parties/${eventId}/photos-settings`, { method: "PUT", body: { partyDayOnly: box.checked }, token });
-      toast(box.checked ? "L'album ouvrira le jour de la fête 🔒" : "L'album est ouvert à tous 📸");
+      toast(box.checked ? "L'album ouvrira le jour de la fête" : "L'album est ouvert à tous");
       box.disabled = false;
       patchSpace(next);
     } catch (err) {
@@ -1484,7 +1528,7 @@ function setupPhotos(eventId, token) {
     }
     progress.textContent = "";
     add.disabled = false;
-    if (sent) toast(`${sent} photo${sent > 1 ? "s" : ""} ajoutée${sent > 1 ? "s" : ""} 📸`);
+    if (sent) toast(`${sent} photo${sent > 1 ? "s" : ""} ajoutée${sent > 1 ? "s" : ""}`);
     if (failed.length) toast(failed[0] + (failed.length > 1 ? ` (+${failed.length - 1} autre${failed.length > 2 ? "s" : ""})` : ""), 5000);
     if (!sent) return;
     try {
@@ -1504,7 +1548,7 @@ function openPhotoViewer(eventId, token, photoId) {
     <div class="pv-top">
       <span class="pv-who" id="pv-who"></span>
       <span class="pv-count muted" id="pv-count"></span>
-      <button class="pv-btn" data-act="close" aria-label="Fermer">✕</button>
+      <button class="pv-btn" data-act="close" aria-label="Fermer">${icon("x")}</button>
     </div>
     <div class="pv-stage">
       <button class="pv-btn pv-nav" data-act="prev" aria-label="Photo précédente">‹</button>
@@ -1512,8 +1556,8 @@ function openPhotoViewer(eventId, token, photoId) {
       <button class="pv-btn pv-nav" data-act="next" aria-label="Photo suivante">›</button>
     </div>
     <div class="pv-bottom">
-      <a class="pv-btn" id="pv-download" download>⬇️ Enregistrer</a>
-      <button class="pv-btn" data-act="delete" id="pv-delete">🗑️ Supprimer</button>
+      <a class="pv-btn" id="pv-download" download>${icon("download")} Enregistrer</a>
+      <button class="pv-btn" data-act="delete" id="pv-delete">${icon("trash")} Supprimer</button>
     </div>`;
   document.body.append(dlg);
   const img = dlg.querySelector("#pv-img");
@@ -1877,7 +1921,7 @@ function parseComment(body) {
   return { text: lines.join("\n").trim(), gifs, pics, replyTo };
 }
 
-const mediaLabel = ({ gifs, pics }) => (pics.length ? "📷 Photo" : gifs.length ? "GIF" : "");
+const mediaLabel = ({ gifs, pics }) => (pics.length ? "Photo" : gifs.length ? "GIF" : "");
 
 // One-line preview of a comment for quotes.
 function quoteText(body) {
@@ -1993,7 +2037,7 @@ function setupComments(eventId, me, initial, token, guests) {
 
   const notifVerb = (n) =>
     n.kind === "like" ? `a réagi ${n.emoji} à votre commentaire` : n.kind === "reply" ? "a répondu à votre commentaire" : "vous a tagué·e";
-  const notifText = (n) => `${n.kind === "like" ? n.emoji : n.kind === "reply" ? "↩️" : "💬"} ${n.from} ${notifVerb(n)}`;
+  const notifText = (n) => `${n.from} ${notifVerb(n)}`;
 
   function drawPanel(seen) {
     panel.innerHTML = `<h2>Notifications</h2>${
@@ -2052,7 +2096,7 @@ function setupComments(eventId, me, initial, token, guests) {
     const pinned = comments.find((c) => c.pinned);
     pinnedBox.innerHTML = pinned
       ? `<button class="pinned" data-goto-comment="${esc(pinned.id)}">
-           <span class="pinned-label">📌 Épinglé · ${esc(pinned.name)}</span>
+           <span class="pinned-label">${icon("pinned")} Épinglé · ${esc(pinned.name)}</span>
            <span class="pinned-text">${esc(quoteText(pinned.body))}</span>
          </button>`
       : "";
@@ -2076,7 +2120,7 @@ function setupComments(eventId, me, initial, token, guests) {
             for (const l of likes) groups.set(l.emoji || "❤️", [...(groups.get(l.emoji || "❤️") || []), l.guestId === me.id ? "Vous" : l.name]);
             const onlyMedia = !text && !quote && (gifs.length || pics.length);
             return `<li id="c-${esc(c.id)}" class="comment ${mine ? "mine" : "theirs"} ${cont ? "cont" : ""} ${tagged ? "tagged" : ""} ${c.pinned ? "is-pinned" : ""}">
-              <span class="swipe-reply" aria-hidden="true">↩️</span>
+              <span class="swipe-reply" aria-hidden="true">${icon("reply")}</span>
               ${mine ? "" : avatar(c.name)}
               <div class="bubble-wrap">
                 <div class="bubble ${onlyMedia ? "media-only" : ""}">
@@ -2094,7 +2138,7 @@ function setupComments(eventId, me, initial, token, guests) {
                           .join("")}</div>`
                       : ""
                   }
-                  <span class="stamp">${c.pinned ? `<span title="Épinglé">📌</span>` : ""}${c.editedAt ? `<span class="edited">modifié</span>` : ""}<span data-at="${esc(c.createdAt)}">${esc(formatAgo(c.createdAt))}</span></span>
+                  <span class="stamp">${c.pinned ? `<span title="Épinglé">${icon("pinned")}</span>` : ""}${c.editedAt ? `<span class="edited">modifié</span>` : ""}<span data-at="${esc(c.createdAt)}">${esc(formatAgo(c.createdAt))}</span></span>
                 </div>
                 ${
                   groups.size
@@ -2153,8 +2197,8 @@ function setupComments(eventId, me, initial, token, guests) {
     replyTo = comment ? comment.id : null;
     replyBar.hidden = !comment;
     replyBar.innerHTML = comment
-      ? `<span class="reply-label"><span>↩️ Réponse à <strong>${esc(comment.name)}</strong></span><span class="muted">${esc(quoteText(comment.body))}</span></span>
-         <button type="button" class="link small" id="reply-cancel" aria-label="Annuler la réponse">✕</button>`
+      ? `<span class="reply-label"><span>${icon("reply")} Réponse à <strong>${esc(comment.name)}</strong></span><span class="muted">${esc(quoteText(comment.body))}</span></span>
+         <button type="button" class="link small" id="reply-cancel" aria-label="Annuler la réponse">${icon("x")}</button>`
       : "";
   };
   // Editing loads the comment's text into the box; its GIFs, pictures and the
@@ -2166,8 +2210,8 @@ function setupComments(eventId, me, initial, token, guests) {
       replyTo = null;
       replyBar.hidden = false;
       replyBar.classList.add("editing");
-      replyBar.innerHTML = `<span class="reply-label"><span>✏️ Modification de votre commentaire</span><span class="muted">${esc(quoteText(comment.body))}</span></span>
-         <button type="button" class="link small" id="reply-cancel" aria-label="Annuler la modification">✕</button>`;
+      replyBar.innerHTML = `<span class="reply-label"><span>${icon("pencil")} Modification de votre commentaire</span><span class="muted">${esc(quoteText(comment.body))}</span></span>
+         <button type="button" class="link small" id="reply-cancel" aria-label="Annuler la modification">${icon("x")}</button>`;
       textarea.value = parseComment(comment.body).text;
     } else {
       replyBar.classList.remove("editing");
@@ -2257,11 +2301,11 @@ function setupComments(eventId, me, initial, token, guests) {
       <div class="sheet-preview"><strong>${esc(mine ? "Vous" : c.name)}</strong><span>${esc(quoteText(c.body))}</span></div>
       ${likes.length ? `<p class="sheet-likers">${likes.map((l) => `${esc(l.emoji || "❤️")} ${esc(l.guestId === me.id ? "Vous" : l.name)}`).join(" · ")}</p>` : ""}
       <div class="sheet-actions">
-        ${action("reply", "↩️", "Répondre")}
-        ${mine && text ? action("edit", "✏️", "Modifier") : ""}
-        ${me.isHost ? action("pin", "📌", c.pinned ? "Désépingler" : "Épingler en haut") : ""}
-        ${text && navigator.clipboard ? action("copy", "📋", "Copier le texte") : ""}
-        ${mine || me.isHost ? action("delete", "🗑️", "Supprimer", "danger") : ""}
+        ${action("reply", icon("reply"), "Répondre")}
+        ${mine && text ? action("edit", icon("pencil"), "Modifier") : ""}
+        ${me.isHost ? action("pin", icon("pinned"), c.pinned ? "Désépingler" : "Épingler en haut") : ""}
+        ${text && navigator.clipboard ? action("copy", icon("copy"), "Copier le texte") : ""}
+        ${mine || me.isHost ? action("delete", icon("trash"), "Supprimer", "danger") : ""}
       </div>
       <button type="button" class="sheet-cancel" data-act="close">Annuler</button>`;
     sheet.dataset.comment = commentId;
@@ -2296,7 +2340,7 @@ function setupComments(eventId, me, initial, token, guests) {
       return withBusy(btn, async () => {
         const pinned = !c.pinned;
         draw((await api(`/parties/${eventId}/comments/${id}/pin`, { method: "PUT", body: { pinned }, token })).comments);
-        toast(pinned ? "📌 Message épinglé en haut des commentaires" : "Message désépinglé");
+        toast(pinned ? "Message épinglé en haut des commentaires" : "Message désépinglé");
       });
     }
     if (act === "delete") {
@@ -2328,7 +2372,7 @@ function setupComments(eventId, me, initial, token, guests) {
     const reactBtn = ev.target.closest("[data-react]");
     if (reactBtn) return withBusy(reactBtn, () => react(reactBtn.dataset.react, reactBtn.dataset.emoji));
   });
-  // Double-tap a message to send a ❤️, like on Instagram.
+  // Double-tap a message to send a heart reaction, like on Instagram.
   list.addEventListener("dblclick", (ev) => {
     const li = ev.target.closest("li[id^='c-']");
     if (!li || ev.target.closest("button, a")) return;
@@ -2602,14 +2646,14 @@ function setupComments(eventId, me, initial, token, guests) {
   }
 
   // ----- photos and GIFs from the phone -----
-  // Picked with 📷, pasted, dropped, or (once browsers allow it) sent by the keyboard.
+  // Picked with the camera button, pasted, dropped, or (once browsers allow it) sent by the keyboard.
   // They wait as thumbnails above the text box and go out with the next "Envoyer".
   const attachments = document.getElementById("attachments");
   const drawPics = () => {
     const mine = pendingPics.filter((p) => p.eventId === eventId);
     attachments.hidden = !mine.length;
     attachments.innerHTML = mine
-      .map((p, i) => `<span class="attachment"><img src="${p.url}" alt=""><button type="button" data-unpick="${i}" aria-label="Retirer">✕</button></span>`)
+      .map((p, i) => `<span class="attachment"><img src="${p.url}" alt=""><button type="button" data-unpick="${i}" aria-label="Retirer">${icon("x")}</button></span>`)
       .join("");
   };
   const clearPics = () => {
@@ -2642,7 +2686,7 @@ function setupComments(eventId, me, initial, token, guests) {
   textarea.addEventListener("media", (ev) => {
     const files = ev.detail.filter((f) => f instanceof File);
     if (files.length) addPics(files);
-    else toast("Ce clavier n'envoie pas encore d'images à ce site : utilisez le bouton 📷");
+    else toast("Ce clavier n'envoie pas encore d'images à ce site : utilisez le bouton photo");
   });
   const picBtn = document.getElementById("pic-open");
   const picFile = document.getElementById("pic-file");
@@ -2700,7 +2744,7 @@ function renderEdit(eventId, data) {
     <section class="card danger-zone stack">
       <h2>Supprimer l'événement</h2>
       <p class="muted small">L'événement disparaît pour tout le monde : invités, réponses, commentaires et fond. La playlist Spotify, elle, reste sur Spotify. C'est définitif.</p>
-      <button class="danger" id="delete-event">🗑️ Supprimer « ${esc(event.title)} »</button>
+      <button class="danger" id="delete-event">${icon("trash")} Supprimer « ${esc(event.title)} »</button>
     </section>
   `;
   document.getElementById("delete-event").addEventListener("click", (ev) => {
@@ -2732,7 +2776,7 @@ function renderEdit(eventId, data) {
 function renderMessage(text) {
   setBackground(null, 0);
   applyColor("");
-  app.innerHTML = `<section class="card center stack"><div class="emoji">🤷</div><p>${esc(text)}</p><a class="btn primary" href="/">Créer un événement</a></section>`;
+  app.innerHTML = `<section class="card center stack"><div class="hero-icon">${icon("search")}</div><p>${esc(text)}</p><a class="btn primary" href="/">Créer un événement</a></section>`;
 }
 
 // ---------- router ----------
