@@ -112,9 +112,14 @@ function avatar(name, size = "") {
     .map((w) => w[0])
     .join("")
     .toUpperCase();
+  return `<span class="avatar ${size}" style="--hue:${hueOf(clean)}" aria-hidden="true">${esc(initials || "?")}</span>`;
+}
+
+// A stable color per name, shared by the avatar and the name above chat bubbles.
+function hueOf(name) {
   let hash = 0;
-  for (const ch of clean) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
-  return `<span class="avatar ${size}" style="--hue:${hash % 360}" aria-hidden="true">${esc(initials || "?")}</span>`;
+  for (const ch of String(name || "?").trim()) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
+  return hash % 360;
 }
 
 // Overlapping faces of the people coming, "+N" when there are many.
@@ -876,6 +881,7 @@ function spaceHtml(eventId, data, identity) {
       <h2>💬 Commentaires</h2>
       <div id="pinned"></div>
       <ul class="comments" id="comments"></ul>
+      <p class="muted small comments-hint">${matchMedia("(pointer: coarse)").matches ? "Appui long sur un message pour réagir · glissez-le vers la droite pour répondre" : "Survolez un message et cliquez sur ⋯ (ou clic droit) pour réagir ou répondre"}</p>
       <form id="comment-form" class="comment-form" autocomplete="off">
         <ul class="mention-list" id="mention-list" role="listbox" hidden></ul>
         <div class="reply-bar" id="reply-bar" hidden></div>
@@ -1975,64 +1981,57 @@ function setupComments(eventId, me, initial, token, guests) {
       : "";
     list.innerHTML = comments.length
       ? comments
-          .map((c) => {
+          .map((c, i) => {
             const { text, gifs, pics, replyTo } = parseComment(c.body);
             const parent = replyTo ? byId.get(replyTo) : null;
             const quote = replyTo
               ? parent
-                ? `<button class="quote" data-goto-comment="${esc(parent.id)}"><strong>${esc(parent.name)}</strong><span>${esc(quoteText(parent.body))}</span></button>`
+                ? `<button class="quote" data-goto-comment="${esc(parent.id)}"><strong>${esc(parent.guestId === me.id ? "Vous" : parent.name)}</strong><span>${esc(quoteText(parent.body))}</span></button>`
                 : `<div class="quote gone"><span>Message supprimé</span></div>`
               : "";
             const mine = c.guestId === me.id;
             const tagged = !mine && mentionsMe(text, me.name);
+            // Messages in a row from the same person are grouped, like in a chat app.
+            const cont = i > 0 && comments[i - 1].guestId === c.guestId;
             const likes = c.likes || [];
             const myEmoji = likes.find((l) => l.guestId === me.id)?.emoji || "";
             const groups = new Map();
             for (const l of likes) groups.set(l.emoji || "❤️", [...(groups.get(l.emoji || "❤️") || []), l.guestId === me.id ? "Vous" : l.name]);
-            const likers = likes.map((l) => `${l.guestId === me.id ? "Vous" : l.name} ${l.emoji || "❤️"}`).join(", ");
-            return `<li id="c-${esc(c.id)}" class="${mine ? "mine" : ""} ${tagged ? "tagged" : ""} ${c.pinned ? "is-pinned" : ""}">
-              ${avatar(c.name)}
-              <div class="comment-body">
-                <div class="comment-meta"><strong>${esc(c.name)}</strong>
-                  <span class="muted small" data-at="${esc(c.createdAt)}">${esc(formatAgo(c.createdAt))}</span>
-                  ${c.editedAt ? `<span class="muted small edited" title="Modifié">· modifié</span>` : ""}
-                  ${c.pinned ? `<span class="small pin-mark" title="Épinglé">📌</span>` : ""}
-                  <span class="comment-actions">
-                    ${mine ? "" : `<button class="link small" data-reply="${esc(c.id)}" data-reply-name="${esc(c.name)}">Répondre</button>`}
-                    ${mine && text ? `<button class="link small" data-edit="${esc(c.id)}">Modifier</button>` : ""}
-                    ${me.isHost ? `<button class="link small" data-pin="${esc(c.id)}" data-pinned="${c.pinned ? 1 : ""}">${c.pinned ? "Désépingler" : "Épingler"}</button>` : ""}
-                    ${mine || me.isHost ? `<button class="link small delete" data-delete="${esc(c.id)}" aria-label="Supprimer le commentaire">Supprimer</button>` : ""}
-                  </span>
+            const onlyMedia = !text && !quote && (gifs.length || pics.length);
+            return `<li id="c-${esc(c.id)}" class="comment ${mine ? "mine" : "theirs"} ${cont ? "cont" : ""} ${tagged ? "tagged" : ""} ${c.pinned ? "is-pinned" : ""}">
+              <span class="swipe-reply" aria-hidden="true">↩️</span>
+              ${mine ? "" : avatar(c.name)}
+              <div class="bubble-wrap">
+                <div class="bubble ${onlyMedia ? "media-only" : ""}">
+                  ${mine || cont ? "" : `<strong class="author" style="--hue:${hueOf(c.name)}">${esc(c.name)}</strong>`}
+                  ${quote}
+                  ${text ? `<p>${formatCommentText(text, names, me.name)}</p>` : ""}
+                  ${gifs.map((id) => `<img class="comment-gif" src="${gifUrl(id)}" alt="GIF" loading="lazy">`).join("")}
+                  ${
+                    pics.length
+                      ? `<div class="comment-pics ${pics.length > 1 ? "multi" : ""}">${pics
+                          .map((p) => {
+                            const src = `/api/parties/${esc(eventId)}/comment-images/${esc(p.id)}`;
+                            return `<a href="${src}" target="_blank" rel="noopener"><img src="${src}" alt="Photo" loading="lazy" width="${p.width}" height="${p.height}"></a>`;
+                          })
+                          .join("")}</div>`
+                      : ""
+                  }
+                  <span class="stamp">${c.pinned ? `<span title="Épinglé">📌</span>` : ""}${c.editedAt ? `<span class="edited">modifié</span>` : ""}<span data-at="${esc(c.createdAt)}">${esc(formatAgo(c.createdAt))}</span></span>
                 </div>
-                ${quote}
-                ${text ? `<p>${formatCommentText(text, names, me.name)}</p>` : ""}
-                ${gifs.map((id) => `<img class="comment-gif" src="${gifUrl(id)}" alt="GIF" loading="lazy">`).join("")}
                 ${
-                  pics.length
-                    ? `<div class="comment-pics ${pics.length > 1 ? "multi" : ""}">${pics
-                        .map((p) => {
-                          const src = `/api/parties/${esc(eventId)}/comment-images/${esc(p.id)}`;
-                          return `<a href="${src}" target="_blank" rel="noopener"><img src="${src}" alt="Photo" loading="lazy" width="${p.width}" height="${p.height}"></a>`;
-                        })
+                  groups.size
+                    ? `<div class="comment-foot">${[...groups]
+                        .map(
+                          ([e, names]) =>
+                            `<button class="reaction ${e === myEmoji ? "on" : ""}" data-react="${esc(c.id)}" data-emoji="${esc(e)}" aria-pressed="${e === myEmoji}" title="${esc(names.join(", "))}">${esc(e)}${names.length > 1 ? ` <span>${names.length}</span>` : ""}</button>`,
+                        )
                         .join("")}</div>`
                     : ""
                 }
-                <div class="comment-foot">
-                  ${[...groups]
-                    .map(
-                      ([e, names]) =>
-                        `<button class="reaction ${e === myEmoji ? "on" : ""}" data-react="${esc(c.id)}" data-emoji="${esc(e)}" aria-pressed="${e === myEmoji}" title="${esc(names.join(", "))}">${esc(e)} <span>${names.length}</span></button>`,
-                    )
-                    .join("")}
-                  <button class="reaction add" data-react-open="${esc(c.id)}" aria-label="Réagir" title="Réagir">${likes.length ? "＋" : "😊＋"}</button>
-                </div>
-                ${likes.length ? `<p class="muted small likers">${esc(likers)}</p>` : ""}
-                <div class="react-bar" data-bar="${esc(c.id)}" hidden>
-                  ${QUICK_REACTIONS.map((e) => `<button type="button" data-react="${esc(c.id)}" data-emoji="${e}" class="${e === myEmoji ? "on" : ""}">${e}</button>`).join("")}
-                  <button type="button" class="more" data-react-more aria-label="Plus d'emojis">⋯</button>
-                  <div class="react-more" hidden>${EMOJIS.filter((e) => !QUICK_REACTIONS.includes(e)).map((e) => `<button type="button" data-react="${esc(c.id)}" data-emoji="${e}" class="${e === myEmoji ? "on" : ""}">${e}</button>`).join("")}</div>
-                </div>
-              </div></li>`;
+              </div>
+              <button class="more-btn" data-menu="${esc(c.id)}" aria-label="Options du message" title="Options">⋯</button>
+            </li>`;
           })
           .join("")
       : `<li class="empty muted small">Pas encore de commentaires. Lancez-vous !</li>`;
@@ -2109,108 +2108,225 @@ function setupComments(eventId, me, initial, token, guests) {
     else setReply(null);
   });
 
+  const findComment = (id) => currentComments.find((c) => c.id === id);
+
   const reply = (commentId) => {
-    const comment = currentComments.find((c) => c.id === commentId);
+    const comment = findComment(commentId);
     if (comment) setReply(comment);
     textarea.focus();
     textarea.setSelectionRange(textarea.value.length, textarea.value.length);
     form.scrollIntoView({ block: "nearest", behavior: "smooth" });
   };
-
-  pinnedBox.addEventListener("click", (ev) => {
-    const btn = ev.target.closest("[data-goto-comment]");
-    const target = btn && document.getElementById(`c-${btn.dataset.gotoComment}`);
+  const startEdit = (commentId) => {
+    const comment = findComment(commentId);
+    if (!comment) return;
+    setEdit(comment);
+    textarea.focus();
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    form.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  };
+  const react = async (commentId, emoji) => {
+    // Tapping your own reaction again removes it; any other emoji replaces it.
+    const mine = findComment(commentId)?.likes?.find((l) => l.guestId === me.id)?.emoji;
+    const body = mine === emoji ? { liked: false } : { liked: true, emoji };
+    draw((await api(`/parties/${eventId}/comments/${commentId}/like`, { method: "PUT", body, token })).comments);
+  };
+  const flashComment = (id) => {
+    const target = document.getElementById(`c-${id}`);
     if (!target) return;
     target.scrollIntoView({ block: "center", behavior: "smooth" });
     target.classList.remove("flash");
     void target.offsetWidth;
     target.classList.add("flash");
-  });
+  };
 
-  list.addEventListener("click", async (ev) => {
-    const replyBtn = ev.target.closest("[data-reply]");
-    if (replyBtn) return reply(replyBtn.dataset.reply);
-    const editBtn = ev.target.closest("[data-edit]");
-    if (editBtn) {
-      const comment = currentComments.find((c) => c.id === editBtn.dataset.edit);
-      if (!comment) return;
-      setEdit(comment);
-      textarea.focus();
-      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-      form.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  // ----- the message menu: long-press a message (or tap ⋯) -----
+  // Reactions on top, then Répondre / Modifier / Épingler / Copier / Supprimer.
+  const sheet = document.createElement("dialog");
+  sheet.className = "sheet";
+  document.body.querySelector("dialog.sheet")?.remove();
+  document.body.append(sheet);
+  // Letting go after a long-press sends a click to whatever is under the finger, which is
+  // now the menu: ignore clicks there until a new touch starts inside the menu.
+  let heldOpen = false;
+  sheet.addEventListener("pointerdown", () => (heldOpen = false));
+  sheet.addEventListener(
+    "click",
+    (ev) => {
+      if (heldOpen) {
+        heldOpen = false;
+        ev.stopImmediatePropagation();
+        return;
+      }
+      if (ev.target === sheet) sheet.close(); // tap on the backdrop
+    },
+    true,
+  );
+
+  function openMenu(commentId) {
+    const c = findComment(commentId);
+    if (!c || sheet.open) return;
+    const { text } = parseComment(c.body);
+    const mine = c.guestId === me.id;
+    const likes = c.likes || [];
+    const myEmoji = likes.find((l) => l.guestId === me.id)?.emoji || "";
+    const action = (act, icon, label, cls = "") => `<button type="button" class="sheet-item ${cls}" data-act="${act}"><span>${icon}</span>${label}</button>`;
+    sheet.innerHTML = `
+      <div class="sheet-reactions">
+        ${QUICK_REACTIONS.map((e) => `<button type="button" data-emoji="${e}" class="${e === myEmoji ? "on" : ""}">${e}</button>`).join("")}
+        <button type="button" class="more" data-act="more-emojis" aria-label="Plus d'emojis">＋</button>
+      </div>
+      <div class="sheet-more" hidden>${EMOJIS.filter((e) => !QUICK_REACTIONS.includes(e)).map((e) => `<button type="button" data-emoji="${e}" class="${e === myEmoji ? "on" : ""}">${e}</button>`).join("")}</div>
+      <div class="sheet-preview"><strong>${esc(mine ? "Vous" : c.name)}</strong><span>${esc(quoteText(c.body))}</span></div>
+      ${likes.length ? `<p class="sheet-likers">${likes.map((l) => `${esc(l.emoji || "❤️")} ${esc(l.guestId === me.id ? "Vous" : l.name)}`).join(" · ")}</p>` : ""}
+      <div class="sheet-actions">
+        ${action("reply", "↩️", "Répondre")}
+        ${mine && text ? action("edit", "✏️", "Modifier") : ""}
+        ${me.isHost ? action("pin", "📌", c.pinned ? "Désépingler" : "Épingler en haut") : ""}
+        ${text && navigator.clipboard ? action("copy", "📋", "Copier le texte") : ""}
+        ${mine || me.isHost ? action("delete", "🗑️", "Supprimer", "danger") : ""}
+      </div>
+      <button type="button" class="sheet-cancel" data-act="close">Annuler</button>`;
+    sheet.dataset.comment = commentId;
+    sheet.showModal();
+    navigator.vibrate?.(10);
+  }
+
+  sheet.addEventListener("click", async (ev) => {
+    const btn = ev.target.closest("button");
+    if (!btn) return;
+    const id = sheet.dataset.comment;
+    const c = findComment(id);
+    if (btn.dataset.emoji) {
+      sheet.close();
+      return withBusy(btn, () => react(id, btn.dataset.emoji));
+    }
+    const act = btn.dataset.act;
+    if (act === "more-emojis") {
+      btn.hidden = true;
+      sheet.querySelector(".sheet-more").hidden = false;
       return;
     }
-    const pinBtn = ev.target.closest("[data-pin]");
-    if (pinBtn) {
-      return withBusy(pinBtn, async () => {
-        const pinned = !pinBtn.dataset.pinned;
-        const { comments } = await api(`/parties/${eventId}/comments/${pinBtn.dataset.pin}/pin`, { method: "PUT", body: { pinned }, token });
-        draw(comments);
+    if (act !== "delete") sheet.close();
+    if (!c || act === "close") return;
+    if (act === "reply") return reply(id);
+    if (act === "edit") return startEdit(id);
+    if (act === "copy") {
+      await navigator.clipboard.writeText(parseComment(c.body).text).catch(() => {});
+      return toast("Texte copié");
+    }
+    if (act === "pin") {
+      return withBusy(btn, async () => {
+        const pinned = !c.pinned;
+        draw((await api(`/parties/${eventId}/comments/${id}/pin`, { method: "PUT", body: { pinned }, token })).comments);
         toast(pinned ? "📌 Message épinglé en haut des commentaires" : "Message désépinglé");
       });
     }
-    const quoteBtn = ev.target.closest("[data-goto-comment]");
-    if (quoteBtn) {
-      const target = document.getElementById(`c-${quoteBtn.dataset.gotoComment}`);
-      if (target) {
-        target.scrollIntoView({ block: "center", behavior: "smooth" });
-        target.classList.remove("flash");
-        void target.offsetWidth;
-        target.classList.add("flash");
-      }
-      return;
-    }
-    const openBtn = ev.target.closest("[data-react-open]");
-    if (openBtn) return toggleBar(openBtn.dataset.reactOpen);
-    const moreBtn = ev.target.closest("[data-react-more]");
-    if (moreBtn) {
-      moreBtn.hidden = true;
-      moreBtn.nextElementSibling.hidden = false;
-      return;
-    }
-    const reactBtn = ev.target.closest("[data-react]");
-    if (reactBtn) {
-      // Tapping your own reaction again removes it; any other emoji replaces it.
-      const commentId = reactBtn.dataset.react;
-      const emoji = reactBtn.dataset.emoji;
-      const mine = list.querySelector(`li[id="c-${CSS.escape(commentId)}"] .reaction.on`)?.dataset.emoji;
-      const body = mine === emoji ? { liked: false } : { liked: true, emoji };
-      return withBusy(reactBtn, async () => {
-        draw((await api(`/parties/${eventId}/comments/${commentId}/like`, { method: "PUT", body, token })).comments);
+    if (act === "delete") {
+      if (!confirm("Supprimer ce message ?")) return;
+      sheet.close();
+      return withBusy(btn, async () => {
+        draw((await api(`/parties/${eventId}/comments/${id}`, { method: "DELETE", token })).comments);
+        toast("Message supprimé");
       });
     }
-    const btn = ev.target.closest("[data-delete]");
-    if (!btn || !confirm("Supprimer ce commentaire ?")) return;
-    withBusy(btn, async () => {
-      draw((await api(`/parties/${eventId}/comments/${btn.dataset.delete}`, { method: "DELETE", token })).comments);
-    });
   });
 
-  function toggleBar(commentId, open) {
-    for (const bar of list.querySelectorAll("[data-bar]")) {
-      const show = bar.dataset.bar === commentId && (open ?? bar.hidden);
-      bar.hidden = !show;
-    }
-  }
+  pinnedBox.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-goto-comment]");
+    if (btn) flashComment(btn.dataset.gotoComment);
+  });
 
-  // Long-press a comment (like WhatsApp) to open its reaction bar.
-  let pressTimer = null;
-  list.addEventListener("pointerdown", (ev) => {
+  let suppressClick = false;
+  list.addEventListener("click", (ev) => {
+    if (suppressClick) {
+      suppressClick = false;
+      ev.preventDefault();
+      return;
+    }
+    const quoteBtn = ev.target.closest("[data-goto-comment]");
+    if (quoteBtn) return flashComment(quoteBtn.dataset.gotoComment);
+    const menuBtn = ev.target.closest("[data-menu]");
+    if (menuBtn) return openMenu(menuBtn.dataset.menu);
+    const reactBtn = ev.target.closest("[data-react]");
+    if (reactBtn) return withBusy(reactBtn, () => react(reactBtn.dataset.react, reactBtn.dataset.emoji));
+  });
+  // Double-tap a message to send a ❤️, like on Instagram.
+  list.addEventListener("dblclick", (ev) => {
     const li = ev.target.closest("li[id^='c-']");
-    if (!li || ev.target.closest("button, a, .react-bar")) return;
-    pressTimer = setTimeout(() => {
-      toggleBar(li.id.slice(2), true);
-      navigator.vibrate?.(10);
+    if (!li || ev.target.closest("button, a")) return;
+    const mine = findComment(li.id.slice(2))?.likes?.find((l) => l.guestId === me.id)?.emoji;
+    if (mine !== "❤️") react(li.id.slice(2), "❤️").catch((err) => toast(err.message));
+  });
+
+  // ----- touch gestures: long-press opens the menu, swipe right replies -----
+  let gesture = null;
+  const SWIPE_REPLY = 60;
+  const resetSwipe = (li) => {
+    li.style.transition = "transform 0.2s ease";
+    li.style.transform = "";
+    li.style.removeProperty("--swipe");
+    setTimeout(() => (li.style.transition = ""), 200);
+  };
+  list.addEventListener("pointerdown", (ev) => {
+    suppressClick = false; // a new touch: whatever the last gesture swallowed is over
+    const li = ev.target.closest("li[id^='c-']");
+    if (!li || ev.button > 0 || ev.target.closest(".more-btn, .reaction")) return;
+    gesture = { li, id: li.id.slice(2), x: ev.clientX, y: ev.clientY, pointer: ev.pointerId, swiping: false, touch: ev.pointerType !== "mouse" };
+    gesture.timer = setTimeout(() => {
+      if (!gesture || gesture.swiping) return;
+      suppressClick = true;
+      const id = gesture.id;
+      gesture = null;
+      openMenu(id);
+      heldOpen = sheet.open;
     }, 450);
   });
-  for (const type of ["pointerup", "pointercancel", "pointermove", "scroll"]) {
-    list.addEventListener(type, (ev) => {
-      if (type === "pointermove" && Math.abs(ev.movementX) + Math.abs(ev.movementY) < 3) return;
-      clearTimeout(pressTimer);
-    });
-  }
+  list.addEventListener("pointermove", (ev) => {
+    if (!gesture || ev.pointerId !== gesture.pointer) return;
+    const dx = ev.clientX - gesture.x;
+    const dy = ev.clientY - gesture.y;
+    if (!gesture.swiping) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      clearTimeout(gesture.timer);
+      // Only a mostly horizontal drag to the right on a touch screen is a swipe.
+      if (!gesture.touch || dx < 0 || Math.abs(dy) > Math.abs(dx)) {
+        gesture = null;
+        return;
+      }
+      gesture.swiping = true;
+      gesture.li.setPointerCapture?.(ev.pointerId);
+    }
+    const shift = Math.max(0, Math.min(dx, SWIPE_REPLY + 20));
+    gesture.li.style.transform = `translateX(${shift}px)`;
+    gesture.li.style.setProperty("--swipe", Math.min(shift / SWIPE_REPLY, 1));
+    if (shift >= SWIPE_REPLY && !gesture.armed) navigator.vibrate?.(8);
+    gesture.armed = shift >= SWIPE_REPLY;
+  });
+  const endGesture = (ev) => {
+    if (!gesture) return;
+    clearTimeout(gesture.timer);
+    const g = gesture;
+    gesture = null;
+    if (!g.swiping) return;
+    suppressClick = ev.type === "pointerup";
+    resetSwipe(g.li);
+    if (g.armed && ev.type === "pointerup") reply(g.id);
+  };
+  list.addEventListener("pointerup", endGesture);
+  list.addEventListener("pointercancel", endGesture);
+  list.addEventListener("scroll", () => {
+    if (gesture && !gesture.swiping) {
+      clearTimeout(gesture.timer);
+      gesture = null;
+    }
+  });
   list.addEventListener("contextmenu", (ev) => {
-    if (ev.target.closest("li[id^='c-']") && !ev.target.closest("a, img")) ev.preventDefault();
+    const li = ev.target.closest("li[id^='c-']");
+    if (!li || ev.target.closest("a, img")) return;
+    ev.preventDefault();
+    // Right-click on a computer opens the menu (on phones the long-press already did).
+    if (!sheet.open && matchMedia("(pointer: fine)").matches) openMenu(li.id.slice(2));
   });
 
   // ----- @mention suggestions -----
