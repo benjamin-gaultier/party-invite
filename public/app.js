@@ -645,8 +645,26 @@ function renderSpace(eventId, data) {
       <h2>💬 Commentaires</h2>
       <ul class="comments" id="comments"></ul>
       <form id="comment-form" class="comment-form" autocomplete="off">
-        <textarea name="body" rows="2" maxlength="1000" required placeholder="Écrivez un mot à tout le monde…"></textarea>
-        <button class="primary" type="submit">Envoyer</button>
+        <ul class="mention-list" id="mention-list" role="listbox" hidden></ul>
+        <textarea name="body" rows="2" maxlength="1000" placeholder="Écrivez un mot… (@ pour taguer quelqu'un)"></textarea>
+        <div class="composer-bar">
+          <button type="button" class="tool" id="emoji-open" aria-expanded="false" aria-label="Ajouter un emoji" title="Emojis">😊</button>
+          ${data.gifs ? `<button type="button" class="tool gif-tool" id="gif-open" aria-expanded="false" aria-label="Ajouter un GIF" title="GIFs">GIF</button>` : ""}
+          <button type="button" class="tool" id="mention-open" aria-label="Taguer quelqu'un" title="Taguer quelqu'un">@</button>
+          <button class="primary" type="submit">Envoyer</button>
+        </div>
+        <div class="emoji-panel" id="emoji-panel" hidden>
+          ${EMOJIS.map((e) => `<button type="button" data-emoji="${e}">${e}</button>`).join("")}
+        </div>
+        ${
+          data.gifs
+            ? `<div class="gif-panel" id="gif-panel" hidden>
+                <input type="search" id="gif-q" placeholder="Chercher un GIF (danse, champagne, Paris…)" enterkeyhint="search">
+                <div class="gif-grid" id="gif-grid"></div>
+                <p class="muted small gif-credit">Touchez un GIF pour l'envoyer · Powered by GIPHY</p>
+              </div>`
+            : ""
+        }
       </form>
     </section>
 
@@ -689,7 +707,7 @@ function renderSpace(eventId, data) {
     }
   `;
 
-  setupComments(eventId, me, data.comments || [], identity.token);
+  setupComments(eventId, me, data.comments || [], identity.token, data.guests || []);
   setupMusic(eventId, data, identity.token);
   if (me.isHost) setupBackgroundControl(eventId, identity.token);
   for (const btn of app.querySelectorAll("[data-host-toggle]")) {
@@ -907,13 +925,63 @@ function stopCommentsPolling() {
   commentsTimer = null;
 }
 
-function setupComments(eventId, me, initial, token) {
+const EMOJIS = [
+  "😂", "🥰", "😍", "😘", "😎", "🤩", "🥳", "😭", "🤣", "😅", "🙏", "👏",
+  "🙌", "💃", "🕺", "👀", "🔥", "✨", "🎉", "🎊", "🍾", "🥂", "🍷", "🍸",
+  "🍕", "🥐", "🧀", "🎶", "🎵", "🚇", "🗼", "🇫🇷", "❤️", "💜", "💖", "👍",
+  "😴", "🤔", "🙈", "😱", "💯", "🫶",
+];
+
+const GIF_LINE = /^\[gif:([A-Za-z0-9]+)\]$/;
+const gifUrl = (id) => `https://media.giphy.com/media/${id}/200w.webp`;
+const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// Escapes a comment's text and highlights "@Name" for names we know (longest first, so
+// "@Marie Claire" wins over "@Marie").
+function formatCommentText(text, names, myName) {
+  const sorted = [...new Set(names)].filter(Boolean).sort((a, b) => b.length - a.length);
+  if (!sorted.length) return esc(text);
+  const re = new RegExp(`@(${sorted.map(escRe).join("|")})(?![\\p{L}\\p{N}])`, "giu");
+  let out = "";
+  let last = 0;
+  for (const m of text.matchAll(re)) {
+    out += esc(text.slice(last, m.index));
+    const isMe = m[1].toLowerCase() === myName.toLowerCase();
+    out += `<span class="mention${isMe ? " me" : ""}">${esc(m[0])}</span>`;
+    last = m.index + m[0].length;
+  }
+  return out + esc(text.slice(last));
+}
+
+// Splits a stored comment into its text and the GIFs it carries ("[gif:ID]" lines).
+function parseComment(body) {
+  const gifs = [];
+  const lines = [];
+  for (const line of body.split("\n")) {
+    const m = line.trim().match(GIF_LINE);
+    if (m) gifs.push(m[1]);
+    else lines.push(line);
+  }
+  return { text: lines.join("\n").trim(), gifs };
+}
+
+function mentionsMe(text, myName) {
+  const re = new RegExp(`@${escRe(myName)}(?![\\p{L}\\p{N}])`, "iu");
+  return re.test(text);
+}
+
+function setupComments(eventId, me, initial, token, guests) {
   stopCommentsPolling();
   const list = document.getElementById("comments");
   const form = document.getElementById("comment-form");
+  const textarea = form.querySelector("textarea");
+  const sendBtn = form.querySelector("button[type=submit]");
   let lastKey = "";
+  // Everyone we can tag: guests, plus authors of comments (in case someone joined since).
+  const people = new Map(guests.map((g) => [g.id, g.name]));
 
   const draw = (comments) => {
+    for (const c of comments) people.set(c.guestId, c.name);
     const key = comments.map((c) => c.id + c.name).join();
     if (key === lastKey) {
       // Same comments: just refresh the "x min ago" labels.
@@ -922,25 +990,46 @@ function setupComments(eventId, me, initial, token) {
     }
     const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
     lastKey = key;
+    const names = [...people.values()];
     list.innerHTML = comments.length
       ? comments
-          .map(
-            (c) => `<li class="${c.guestId === me.id ? "mine" : ""}">
+          .map((c) => {
+            const { text, gifs } = parseComment(c.body);
+            const mine = c.guestId === me.id;
+            const tagged = !mine && mentionsMe(text, me.name);
+            return `<li class="${mine ? "mine" : ""} ${tagged ? "tagged" : ""}">
               ${avatar(c.name)}
               <div class="comment-body">
                 <div class="comment-meta"><strong>${esc(c.name)}</strong>
                   <span class="muted small" data-at="${esc(c.createdAt)}">${esc(formatAgo(c.createdAt))}</span>
-                  ${c.guestId === me.id || me.isHost ? `<button class="link small delete" data-delete="${esc(c.id)}" aria-label="Supprimer le commentaire">Supprimer</button>` : ""}
+                  <span class="comment-actions">
+                    ${mine ? "" : `<button class="link small" data-reply="${esc(c.name)}">Répondre</button>`}
+                    ${mine || me.isHost ? `<button class="link small delete" data-delete="${esc(c.id)}" aria-label="Supprimer le commentaire">Supprimer</button>` : ""}
+                  </span>
                 </div>
-                <p>${esc(c.body)}</p>
-              </div></li>`,
-          )
+                ${text ? `<p>${formatCommentText(text, names, me.name)}</p>` : ""}
+                ${gifs.map((id) => `<img class="comment-gif" src="${gifUrl(id)}" alt="GIF" loading="lazy">`).join("")}
+              </div></li>`;
+          })
           .join("")
       : `<li class="empty muted small">Pas encore de commentaires. Lancez-vous !</li>`;
     if (nearBottom || !list.dataset.ready) list.scrollTop = list.scrollHeight;
     list.dataset.ready = "1";
   };
   draw(initial);
+
+  // GIFs load after the list is drawn: keep the newest comment in view if we were at the bottom.
+  let stickToBottom = true;
+  list.addEventListener("scroll", () => {
+    stickToBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
+  });
+  list.addEventListener(
+    "load",
+    () => {
+      if (stickToBottom) list.scrollTop = list.scrollHeight;
+    },
+    true,
+  );
 
   const refresh = async () => {
     if (document.hidden || !document.body.contains(list)) return;
@@ -952,7 +1041,30 @@ function setupComments(eventId, me, initial, token) {
   };
   commentsTimer = setInterval(refresh, 8000);
 
+  // ----- inserting into the text box -----
+  const insert = (str, { replaceBefore = 0 } = {}) => {
+    const start = textarea.selectionStart ?? textarea.value.length;
+    const end = textarea.selectionEnd ?? start;
+    textarea.value = textarea.value.slice(0, start - replaceBefore) + str + textarea.value.slice(end);
+    const caret = start - replaceBefore + str.length;
+    textarea.focus();
+    textarea.setSelectionRange(caret, caret);
+    updateMentions();
+  };
+
+  const reply = (name) => {
+    const tag = `@${name} `;
+    if (!textarea.value.includes(tag.trim())) {
+      textarea.value = tag + textarea.value.replace(/^\s+/, "");
+    }
+    textarea.focus();
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    form.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  };
+
   list.addEventListener("click", async (ev) => {
+    const replyBtn = ev.target.closest("[data-reply]");
+    if (replyBtn) return reply(replyBtn.dataset.reply);
     const btn = ev.target.closest("[data-delete]");
     if (!btn || !confirm("Supprimer ce commentaire ?")) return;
     withBusy(btn, async () => {
@@ -960,24 +1072,171 @@ function setupComments(eventId, me, initial, token) {
     });
   });
 
-  const textarea = form.querySelector("textarea");
+  // ----- @mention suggestions -----
+  const mentionList = document.getElementById("mention-list");
+  let mentionQuery = null; // text typed after "@", or null when not tagging
+  let mentionIndex = 0;
+
+  const mentionMatches = () => {
+    const q = mentionQuery.toLowerCase();
+    return [...new Set(people.values())]
+      .filter((n) => n !== me.name && n.toLowerCase().includes(q))
+      .sort((a, b) => b.toLowerCase().startsWith(q) - a.toLowerCase().startsWith(q) || a.localeCompare(b))
+      .slice(0, 6);
+  };
+
+  function updateMentions() {
+    const before = textarea.value.slice(0, textarea.selectionStart ?? 0);
+    const m = before.match(/(?:^|\s)@([^\s@]{0,20})$/u);
+    mentionQuery = m ? m[1] : null;
+    const matches = mentionQuery === null ? [] : mentionMatches();
+    if (!matches.length) {
+      mentionList.hidden = true;
+      return;
+    }
+    mentionIndex = Math.min(mentionIndex, matches.length - 1);
+    mentionList.innerHTML = matches
+      .map(
+        (n, i) =>
+          `<li role="option" aria-selected="${i === mentionIndex}"><button type="button" data-mention="${esc(n)}">${avatar(n, "sm")} ${esc(n)}</button></li>`,
+      )
+      .join("");
+    mentionList.hidden = false;
+  }
+
+  const pickMention = (name) => {
+    insert(`@${name} `, { replaceBefore: mentionQuery.length + 1 });
+    mentionList.hidden = true;
+  };
+
+  mentionList.addEventListener("mousedown", (ev) => ev.preventDefault()); // keep focus in the text box
+  mentionList.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-mention]");
+    if (btn) pickMention(btn.dataset.mention);
+  });
+  textarea.addEventListener("input", () => {
+    mentionIndex = 0;
+    updateMentions();
+  });
+  textarea.addEventListener("click", updateMentions);
+  textarea.addEventListener("blur", () => setTimeout(() => (mentionList.hidden = true), 150));
+  document.getElementById("mention-open").addEventListener("click", () => {
+    const before = textarea.value.slice(0, textarea.selectionStart ?? textarea.value.length);
+    insert(before && !/\s$/.test(before) ? " @" : "@");
+  });
+
   textarea.addEventListener("keydown", (ev) => {
+    if (!mentionList.hidden) {
+      const matches = mentionMatches();
+      if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+        ev.preventDefault();
+        mentionIndex = (mentionIndex + (ev.key === "ArrowDown" ? 1 : -1) + matches.length) % matches.length;
+        updateMentions();
+        return;
+      }
+      if (ev.key === "Enter" || ev.key === "Tab") {
+        ev.preventDefault();
+        pickMention(matches[mentionIndex]);
+        return;
+      }
+      if (ev.key === "Escape") {
+        mentionList.hidden = true;
+        return;
+      }
+    }
     if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing && matchMedia("(pointer: fine)").matches) {
       ev.preventDefault();
       form.requestSubmit();
     }
   });
+
+  // ----- emoji and GIF panels -----
+  const emojiBtn = document.getElementById("emoji-open");
+  const emojiPanel = document.getElementById("emoji-panel");
+  const gifBtn = document.getElementById("gif-open");
+  const gifPanel = document.getElementById("gif-panel");
+
+  const toggle = (btn, panel, open = panel.hidden) => {
+    panel.hidden = !open;
+    btn.setAttribute("aria-expanded", String(open));
+  };
+
+  emojiPanel.addEventListener("mousedown", (ev) => ev.preventDefault());
+  emojiBtn.addEventListener("click", () => {
+    if (gifPanel) toggle(gifBtn, gifPanel, false);
+    toggle(emojiBtn, emojiPanel);
+  });
+  emojiPanel.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-emoji]");
+    if (btn) insert(btn.dataset.emoji);
+  });
+
+  const send = async (body) => {
+    const { comments } = await api(`/parties/${eventId}/comments`, { method: "POST", body: { body }, token });
+    textarea.value = "";
+    toggle(emojiBtn, emojiPanel, false);
+    if (gifPanel) toggle(gifBtn, gifPanel, false);
+    lastKey = "";
+    list.dataset.ready = "";
+    draw(comments);
+  };
+
+  if (gifPanel) {
+    const grid = document.getElementById("gif-grid");
+    const q = document.getElementById("gif-q");
+    let searchTimer = null;
+    let searchSeq = 0;
+    const search = async () => {
+      const seq = ++searchSeq;
+      grid.innerHTML = `<p class="muted small">Recherche…</p>`;
+      try {
+        const { gifs } = await api(`/parties/${eventId}/gifs?q=${encodeURIComponent(q.value.trim())}`, { token });
+        if (seq !== searchSeq) return;
+        grid.innerHTML = gifs.length
+          ? gifs
+              .map(
+                (g) =>
+                  `<button type="button" data-gif="${esc(g.id)}" title="${esc(g.title)}"><img src="${esc(g.preview)}" alt="${esc(g.title || "GIF")}" loading="lazy" width="${g.width}" height="${g.height}"></button>`,
+              )
+              .join("")
+          : `<p class="muted small">Aucun GIF trouvé.</p>`;
+      } catch (err) {
+        if (seq === searchSeq) grid.innerHTML = `<p class="muted small">${esc(err.message)}</p>`;
+      }
+    };
+    gifBtn.addEventListener("click", () => {
+      toggle(emojiBtn, emojiPanel, false);
+      toggle(gifBtn, gifPanel);
+      if (!gifPanel.hidden) {
+        if (!grid.children.length) search();
+        if (matchMedia("(pointer: fine)").matches) q.focus();
+      }
+    });
+    q.addEventListener("input", () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(search, 500);
+    });
+    q.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        clearTimeout(searchTimer);
+        search();
+      }
+    });
+    grid.addEventListener("click", (ev) => {
+      const btn = ev.target.closest("[data-gif]");
+      if (!btn) return;
+      // The GIF goes out with whatever is typed, e.g. "@Banu trop bien" + GIF.
+      const text = textarea.value.trim();
+      withBusy(btn, () => send((text ? text + "\n" : "") + `[gif:${btn.dataset.gif}]`));
+    });
+  }
+
   form.addEventListener("submit", (ev) => {
     ev.preventDefault();
     const body = textarea.value.trim();
     if (!body) return;
-    withBusy(form.querySelector("button"), async () => {
-      const { comments } = await api(`/parties/${eventId}/comments`, { method: "POST", body: { body }, token });
-      textarea.value = "";
-      lastKey = "";
-      list.dataset.ready = "";
-      draw(comments);
-    });
+    withBusy(sendBtn, () => send(body));
   });
 }
 

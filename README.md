@@ -57,6 +57,22 @@ Local test without Spotify: `npm run fake-spotify`, then
 `npx wrangler dev --var SPOTIFY_CLIENT_ID:test --var SPOTIFY_CLIENT_SECRET:test --var SPOTIFY_API_URL:http://localhost:8788/v1 --var SPOTIFY_ACCOUNTS_URL:http://localhost:8788`
 and `npm run smoke:spotify`.
 
+## Comments: emojis, GIFs and @mentions
+
+Guests can add emojis from a picker, tag someone with `@` (or the "Répondre" button), and
+send GIFs. A tagged guest sees that comment highlighted. Everything lives in the existing
+`comments.body` text: a GIF is stored as a `[gif:ID]` line and shown from media.giphy.com.
+No database change.
+
+GIF search goes through the Worker (`GET /api/parties/:id/gifs?q=`) so the key stays secret.
+Setup: create an app at <https://developers.giphy.com/dashboard/> (API, not SDK) and set its
+key as the Worker secret `GIPHY_API_KEY`. Without it the GIF button is hidden. A free key
+allows about 100 searches an hour; results are cached for an hour per search term.
+
+Local test: `node scripts/fake-giphy.mjs`, then
+`npx wrangler dev --var GIPHY_API_KEY:test --var GIPHY_API_URL:http://localhost:8789/v1`
+and `npm run smoke`.
+
 ## Deploy to Cloudflare
 
 The production D1 database `party-invite` already exists (its id is in `wrangler.jsonc`)
