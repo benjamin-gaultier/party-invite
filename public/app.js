@@ -428,7 +428,105 @@ async function uploadBackground(eventId, token, blob) {
   return data;
 }
 
-let lastCardKey = "hero"; // card last chosen in the picker, kept across redraws
+// ---------- per-card style (host) ----------
+// Each card gets a small "Aa" button that opens a sheet with just that card's fonts and colors.
+
+let closeCardStyle = () => {};
+let openCardStyle = () => {};
+document.addEventListener("click", (ev) => {
+  const btn = ev.target.closest("[data-card-edit]");
+  if (btn) openCardStyle(btn.dataset.cardEdit);
+});
+
+// Adds the "Aa" buttons (hosts only). Called again after live blocks are swapped.
+function addCardButtons() {
+  if (!space.data?.me?.isHost) return;
+  for (const el of app.querySelectorAll("[data-card]")) {
+    if (el.querySelector(":scope > .card-edit")) continue;
+    const name = CARDS.find(([k]) => k === el.dataset.card)?.[1] || "";
+    el.insertAdjacentHTML(
+      "beforeend",
+      `<button type="button" class="card-edit" data-card-edit="${el.dataset.card}" aria-label="Police et couleurs : ${esc(name)}" title="Police et couleurs">Aa</button>`,
+    );
+  }
+}
+
+function setupCardStyle(eventId, token) {
+  const panel = document.getElementById("card-style");
+  const controls = [...panel.querySelectorAll("[data-prop]")];
+  let key = null;
+  let cards = {};
+  const saved = () => space.data.event.color;
+  const withCards = () => serializeStyle({ ...parseStyle(saved()), cards });
+  const cardEl = () => app.querySelector(`[data-card="${key}"]`);
+
+  // Puts the card's values in the controls. Unset colors show what the card uses now.
+  function fill() {
+    const el = cardEl();
+    const shown = (sel) => {
+      const target = (sel && el?.querySelector(sel)) || el || document.body;
+      const [r, g, b] = getComputedStyle(target).color.match(/\d+/g).map(Number);
+      return "#" + [r, g, b].map((n) => n.toString(16).padStart(2, "0")).join("");
+    };
+    const current = cards[key] || {};
+    for (const control of controls) {
+      const prop = control.dataset.prop;
+      if (CARD_PROPS[prop] === "font") control.value = current[prop] || "";
+      else control.value = current[prop] || shown(prop === "title" ? "h1, h2" : "");
+      panel.querySelector(`[data-auto="${prop}"]`)?.toggleAttribute("hidden", !current[prop]);
+    }
+  }
+  const setProp = (prop, value) => {
+    const next = { ...cards[key], [prop]: value };
+    if (!value) delete next[prop];
+    cards = { ...cards, [key]: next };
+    applyColor(withCards());
+    fill();
+  };
+
+  closeCardStyle = () => {
+    panel.hidden = true;
+    cardEl()?.classList.remove("card-editing");
+    key = null;
+    applyColor(saved()); // drop the unsaved preview
+  };
+  openCardStyle = (k) => {
+    const picker = document.getElementById("color-picker");
+    if (picker && !picker.hidden) document.getElementById("color-open").click(); // one menu at a time
+    if (key) closeCardStyle();
+    key = k;
+    cards = parseStyle(saved()).cards;
+    loadFonts(Object.keys(FONTS)); // so each choice shows right away
+    panel.querySelector("#card-style-title").textContent = `Aa · ${CARDS.find(([c]) => c === k)?.[1] || ""}`;
+    panel.hidden = false;
+    const el = cardEl();
+    el?.classList.add("card-editing");
+    if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 70, behavior: "smooth" });
+    fill();
+  };
+
+  for (const control of controls) {
+    control.addEventListener(control.tagName === "SELECT" ? "change" : "input", () => setProp(control.dataset.prop, control.value.toLowerCase()));
+  }
+  for (const btn of panel.querySelectorAll("[data-auto]")) btn.addEventListener("click", () => setProp(btn.dataset.auto, ""));
+  panel.querySelector("#card-reset").addEventListener("click", () => {
+    const { [key]: _, ...rest } = cards;
+    cards = rest;
+    applyColor(withCards());
+    fill();
+  });
+  panel.querySelector("#card-style-close").addEventListener("click", closeCardStyle);
+  const saveBtn = panel.querySelector("#card-style-save");
+  saveBtn.addEventListener("click", () =>
+    withBusy(saveBtn, async () => {
+      const data = await api(`/parties/${eventId}/color`, { method: "PUT", body: { color: withCards() }, token });
+      key = null;
+      renderSpace(eventId, data);
+      toast("Style enregistré");
+    }),
+  );
+  addCardButtons();
+}
 
 // Organizer-only floating buttons on the event page: pick a photo / remove it.
 function setupBackgroundControl(eventId, token) {
@@ -446,8 +544,7 @@ function setupBackgroundControl(eventId, token) {
       style = parseStyle(space.data.event.color); // closed without saving: drop the preview
       applyColor(space.data.event.color);
     } else {
-      loadFonts(Object.keys(FONTS)); // so each choice shows right away
-      showCard();
+      document.getElementById("card-style").hidden || closeCardStyle();
     }
   });
   const save = (btn) =>
@@ -471,53 +568,6 @@ function setupBackgroundControl(eventId, token) {
   }
   const saveAll = document.getElementById("color-save");
   saveAll.addEventListener("click", () => save(saveAll));
-
-  // Per-card fonts and text colors.
-  const cardKey = document.getElementById("card-key");
-  cardKey.value = lastCardKey;
-  const controls = [...picker.querySelectorAll("[data-prop]")];
-  const current = () => style.cards[cardKey.value] || {};
-  const setProp = (prop, value) => {
-    const next = { ...current(), [prop]: value };
-    if (!value) delete next[prop];
-    style = { ...style, cards: { ...style.cards, [cardKey.value]: next } };
-    preview();
-    showCard(false);
-  };
-  // Fills the controls for the chosen card. Unset colors show what the card uses now.
-  function showCard(highlight = true) {
-    const key = cardKey.value;
-    lastCardKey = key;
-    const el = document.querySelector(`[data-card="${key}"]`);
-    const shown = (sel) => {
-      const target = (sel && el?.querySelector(sel)) || el || document.body;
-      const [r, g, b] = getComputedStyle(target).color.match(/\d+/g).map(Number);
-      return "#" + [r, g, b].map((n) => n.toString(16).padStart(2, "0")).join("");
-    };
-    for (const control of controls) {
-      const prop = control.dataset.prop;
-      const value = current()[prop];
-      if (CARD_PROPS[prop] === "font") control.value = value || "";
-      else control.value = value || shown(prop === "title" ? "h1, h2" : "");
-      picker.querySelector(`[data-auto="${prop}"]`)?.toggleAttribute("hidden", !value);
-    }
-    if (highlight && el) {
-      el.classList.remove("card-target");
-      void el.offsetWidth; // restart the flash
-      el.classList.add("card-target");
-    }
-  }
-  cardKey.addEventListener("change", () => showCard());
-  for (const control of controls) {
-    control.addEventListener(control.tagName === "SELECT" ? "change" : "input", () => setProp(control.dataset.prop, control.value.toLowerCase()));
-  }
-  for (const btn of picker.querySelectorAll("[data-auto]")) btn.addEventListener("click", () => setProp(btn.dataset.auto, ""));
-  document.getElementById("card-reset").addEventListener("click", () => {
-    const { [cardKey.value]: _, ...rest } = style.cards;
-    style = { ...style, cards: rest };
-    preview();
-    showCard(false);
-  });
 
   const fileInput = document.getElementById("bg-file");
   const change = document.getElementById("bg-change");
@@ -874,31 +924,32 @@ function spaceHtml(eventId, data, identity) {
                 )
                 .join("")}
             </div>
-            <p class="small"><strong>Polices et couleurs du texte</strong></p>
-            <div class="card-style">
-              <label>Carte
-                <select id="card-key">${CARDS.map(([key, label]) => `<option value="${key}">${esc(label)}</option>`).join("")}</select>
-              </label>
-              ${[
-                ["titleFont", "Police des titres"],
-                ["title", "Couleur des titres"],
-                ["textFont", "Police du texte"],
-                ["text", "Couleur du texte"],
-              ]
-                .map(([prop, label]) =>
-                  CARD_PROPS[prop] === "font"
-                    ? `<label>${label}
-                        <select data-prop="${prop}"><option value="">Par défaut</option>${Object.entries(FONTS)
-                          .map(([key, f]) => `<option value="${key}" style="font-family:${esc(f.css)}">${esc(f.name)}</option>`)
-                          .join("")}</select>
-                      </label>`
-                    : `<div class="color-row"><label><input type="color" data-prop="${prop}"> ${label}</label>
-                        <button type="button" class="link small" data-auto="${prop}">Auto</button></div>`,
-                )
-                .join("")}
-              <button type="button" class="link small" id="card-reset">Réinitialiser cette carte</button>
-            </div>
             <button class="primary" id="color-save">Enregistrer</button>
+          </div>
+          <div class="card-style-panel" id="card-style" hidden>
+            <div class="card-style-head">
+              <strong id="card-style-title"></strong>
+              <button type="button" class="link small" id="card-style-close">Fermer</button>
+            </div>
+            ${[
+              ["title", "Titre"],
+              ["text", "Texte"],
+            ]
+              .map(
+                ([prop, label]) => `<div class="card-style-row">
+                  <span class="card-style-label">${label}</span>
+                  <select data-prop="${prop}Font" aria-label="Police : ${label.toLowerCase()}"><option value="">Police par défaut</option>${Object.entries(FONTS)
+                    .map(([key, f]) => `<option value="${key}" style="font-family:${esc(f.css)}">${esc(f.name)}</option>`)
+                    .join("")}</select>
+                  <input type="color" data-prop="${prop}" aria-label="Couleur : ${label.toLowerCase()}">
+                  <button type="button" class="link small" data-auto="${prop}" title="Couleur par défaut">Auto</button>
+                </div>`,
+              )
+              .join("")}
+            <div class="card-style-actions">
+              <button type="button" class="link small" id="card-reset">Réinitialiser cette carte</button>
+              <button class="primary" id="card-style-save">Enregistrer</button>
+            </div>
           </div>
           <div class="bg-control">
             <button class="bg-fab" id="color-open" aria-expanded="false">🎨 Couleurs</button>
@@ -946,7 +997,10 @@ function bindLive(key) {
 function bindFrame() {
   const { eventId, data, token } = space;
   const { event, me } = data;
-  if (me.isHost) setupBackgroundControl(eventId, token);
+  if (me.isHost) {
+    setupBackgroundControl(eventId, token);
+    setupCardStyle(eventId, token);
+  }
 
   document.getElementById("rename").addEventListener("click", async () => {
     const name = prompt("Votre prénom", me.name)?.trim();
@@ -1265,6 +1319,11 @@ function inUse(el) {
   return !!(search && search.value.trim());
 }
 
+// The host has the color picker or a card's style sheet open, with an unsaved preview.
+function previewing() {
+  return ["color-picker", "card-style"].some((id) => document.getElementById(id)?.hidden === false);
+}
+
 function patchSpace(data) {
   const { eventId } = space;
   const identity = getIdentity(eventId);
@@ -1276,7 +1335,7 @@ function patchSpace(data) {
     // Same page layout: swap only the blocks that changed.
     space.data = data;
     setBackground(eventId, data.event.background_version);
-    if (document.getElementById("color-picker")?.hidden !== false) applyColor(data.event.color); // not while previewing
+    if (!previewing()) applyColor(data.event.color);
     for (const [key, part] of next) {
       if (!key || part.html === prev.get(key).html) continue;
       const old = app.querySelector(`[data-live="${key}"]`);
@@ -1297,12 +1356,13 @@ function patchSpace(data) {
       old.replaceWith(fresh);
       bindLive(key);
     }
+    addCardButtons();
     space.parts = next;
     return;
   }
   // The layout itself changed (made co-host, new address, new colors…): redraw the page,
   // unless a menu or the color picker is open, then wait for the next tick.
-  if (document.querySelector("dialog[open]") || document.getElementById("color-picker")?.hidden === false) return;
+  if (document.querySelector("dialog[open]") || previewing()) return;
   const y = window.scrollY;
   renderSpace(eventId, data);
   window.scrollTo(0, y);
