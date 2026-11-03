@@ -667,7 +667,7 @@ function spaceHtml(eventId, data, identity) {
       <form id="comment-form" class="comment-form" autocomplete="off">
         <ul class="mention-list" id="mention-list" role="listbox" hidden></ul>
         <div class="reply-bar" id="reply-bar" hidden></div>
-        <textarea name="body" rows="2" maxlength="1000" placeholder="Écrivez un mot… (@ pour taguer quelqu'un)"></textarea>
+        <div class="comment-input" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Votre commentaire" data-placeholder="Écrivez un mot… (@ pour taguer quelqu'un)"></div>
         <div class="composer-bar">
           <button type="button" class="tool" id="emoji-open" aria-expanded="false" aria-label="Ajouter un emoji" title="Emojis">😊</button>
           ${data.gifs ? `<button type="button" class="tool gif-tool" id="gif-open" aria-expanded="false" aria-label="Ajouter un GIF" title="GIFs">GIF</button>` : ""}
@@ -1077,7 +1077,7 @@ function liveParts(html) {
 // Someone is in the middle of something here: don't pull the rug.
 function inUse(el) {
   const a = document.activeElement;
-  if (a && a !== document.body && el.contains(a) && a.matches("input, textarea, select")) return true;
+  if (a && a !== document.body && el.contains(a) && a.matches("input, textarea, select, [contenteditable]")) return true;
   if ([...el.querySelectorAll("button")].some((b) => b.disabled)) return true; // request on its way
   const search = el.querySelector("#song-search input");
   return !!(search && search.value.trim());
@@ -1128,7 +1128,7 @@ function patchSpace(data) {
 
 // What is typed in the comment box (and what it answers), so a redraw can put it back.
 function captureDraft() {
-  const textarea = document.querySelector("#comment-form textarea");
+  const textarea = plainEditor(document.querySelector("#comment-form .comment-input"));
   if (!textarea || !space?.comments) return null;
   return {
     value: textarea.value,
@@ -1141,7 +1141,7 @@ function captureDraft() {
 }
 
 function restoreDraft(draft) {
-  const textarea = document.querySelector("#comment-form textarea");
+  const textarea = plainEditor(document.querySelector("#comment-form .comment-input"));
   if (!textarea) return;
   textarea.value = draft.value;
   if (draft.replyTo) space.comments.setReply(draft.replyTo);
@@ -1153,6 +1153,104 @@ function restoreDraft(draft) {
 }
 
 // ---------- comment wall ----------
+
+// The comment box is a contenteditable div rather than a <textarea>: phone keyboards
+// (Gboard, Samsung) only enable their GIF/sticker button in fields that accept rich
+// content. We keep it plain text and give it the bits of the textarea API we use
+// (value, selectionStart/End, setSelectionRange), so the rest of the code doesn't care.
+function plainEditor(el) {
+  if (!el || el._plain) return el;
+  el._plain = true;
+
+  // Caret position as an offset into the text.
+  const offsetOf = (node, offset) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.setEnd(node, offset);
+    return range.toString().length;
+  };
+  const selection = () => {
+    const sel = getSelection();
+    if (!sel.rangeCount || !el.contains(sel.anchorNode)) return null;
+    const r = sel.getRangeAt(0);
+    return [offsetOf(r.startContainer, r.startOffset), offsetOf(r.endContainer, r.endOffset)];
+  };
+  const pointAt = (pos) => {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let node;
+    let last = null;
+    while ((node = walker.nextNode())) {
+      if (pos <= node.length) return [node, pos];
+      pos -= node.length;
+      last = node;
+    }
+    return last ? [last, last.length] : [el, 0];
+  };
+  const text = () => el.textContent;
+  const setText = (value) => {
+    el.textContent = value;
+    // A trailing newline only shows (and takes the caret) with something after it.
+    if (value.endsWith("\n")) el.append(Object.assign(document.createElement("br"), { className: "end" }));
+    el.classList.toggle("empty", !value);
+  };
+
+  Object.defineProperties(el, {
+    value: { get: text, set: setText },
+    selectionStart: { get: () => selection()?.[0] ?? text().length },
+    selectionEnd: { get: () => selection()?.[1] ?? text().length },
+  });
+  el.setSelectionRange = (start, end = start) => {
+    const range = document.createRange();
+    range.setStart(...pointAt(start));
+    range.setEnd(...pointAt(end));
+    const sel = getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  };
+  const insertText = (str) => {
+    const [start, end] = selection() || [text().length, text().length];
+    setText(text().slice(0, start) + str + text().slice(end));
+    el.setSelectionRange(start + str.length);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  // Keep it plain text: new lines become "\n", pasted rich text becomes text, and
+  // anything else the browser slips in (a <div>, a <br>, an <img>) is flattened.
+  el.addEventListener("beforeinput", (ev) => {
+    if (ev.inputType === "insertParagraph" || ev.inputType === "insertLineBreak") {
+      ev.preventDefault();
+      insertText("\n");
+    }
+  });
+  el.addEventListener("paste", (ev) => {
+    const files = [...(ev.clipboardData?.files || [])];
+    ev.preventDefault();
+    if (files.length) {
+      el.dispatchEvent(new CustomEvent("media", { detail: files }));
+      return;
+    }
+    insertText((ev.clipboardData?.getData("text/plain") || "").replace(/\r\n?/g, "\n"));
+  });
+  el.addEventListener("drop", (ev) => {
+    const files = [...(ev.dataTransfer?.files || [])];
+    if (!files.length) return;
+    ev.preventDefault();
+    el.dispatchEvent(new CustomEvent("media", { detail: files }));
+  });
+  el.addEventListener("input", () => {
+    if (el.querySelector("*:not(br.end)") || el.querySelectorAll("br").length > 1) {
+      // Something rich got in (e.g. a keyboard inserted an image): keep only the text.
+      const imgs = [...el.querySelectorAll("img")].map((i) => i.src).filter(Boolean);
+      const pos = el.selectionStart;
+      setText(el.innerText.replace(/\n$/, ""));
+      el.setSelectionRange(Math.min(pos, text().length));
+      if (imgs.length) el.dispatchEvent(new CustomEvent("media", { detail: imgs }));
+    }
+    el.classList.toggle("empty", !text());
+  });
+  el.classList.toggle("empty", !text());
+  return el;
+}
 
 const EMOJIS = [
   "😂", "🥰", "😍", "😘", "😎", "🤩", "🥳", "😭", "🤣", "😅", "🙏", "👏",
@@ -1217,7 +1315,7 @@ function mentionsMe(text, myName) {
 function setupComments(eventId, me, initial, token, guests) {
   const list = document.getElementById("comments");
   const form = document.getElementById("comment-form");
-  const textarea = form.querySelector("textarea");
+  const textarea = plainEditor(form.querySelector(".comment-input"));
   const sendBtn = form.querySelector("button[type=submit]");
   let lastKey = null;
   // Everyone we can tag: guests, plus authors of comments (in case someone joined since).
@@ -1668,9 +1766,17 @@ function setupComments(eventId, me, initial, token, guests) {
     });
   }
 
+  // A GIF or image from the phone keyboard. Sending those needs storage for the files
+  // (next step), so for now point to the GIF button.
+  textarea.addEventListener("media", (ev) => {
+    const first = ev.detail[0];
+    const what = first instanceof File ? `${first.type || "fichier"}, ${Math.round(first.size / 1024)} Ko` : "image";
+    toast(`GIF du clavier reçu (${what}) : bientôt disponible ! En attendant, utilisez le bouton GIF.`, 5000);
+  });
+
   form.addEventListener("submit", (ev) => {
     ev.preventDefault();
-    const body = textarea.value.trim();
+    const body = textarea.value.trim().slice(0, 1000);
     if (!body) return;
     withBusy(sendBtn, () => send(body));
   });
