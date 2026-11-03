@@ -1076,10 +1076,10 @@ function spaceHtml(eventId, data, identity) {
         ? `<section data-live="info" data-card="info" class="card event-info">
             ${
               event.address
-                ? `<a class="place" href="${mapsUrl(event.address)}" target="_blank" rel="noopener">
+                ? `<div class="place">
                     <span class="place-icon">${icon("pin")}</span>
                     <span class="place-text"><span class="place-label">Adresse</span><span class="place-name">${esc(event.address)}</span></span>
-                  </a>
+                  </div>
                   <a class="btn place-go" href="${mapsUrl(event.address)}" target="_blank" rel="noopener">${icon("route")} Itinéraire</a>`
                 : ""
             }
@@ -1099,7 +1099,6 @@ function spaceHtml(eventId, data, identity) {
               `<button data-rsvp="${key}" class="rsvp-${key} ${me.rsvp === key ? "selected" : ""}" aria-pressed="${me.rsvp === key}" aria-label="${RSVP_LABELS[key]}">
                 <span class="rsvp-ic">${icon(RSVP_ICON[key])}</span>
                 <span class="rsvp-label">${RSVP_SHORT[key]}</span>
-                <span class="rsvp-count">${headcount(groups[key])}</span>
               </button>`,
           )
           .join("")}

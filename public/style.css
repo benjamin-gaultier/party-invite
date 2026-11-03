@@ -865,15 +865,13 @@ button .icon, .btn .icon { vertical-align: -0.2em; }
 .rsvp { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .rsvp button {
   display: grid; grid-template-rows: auto auto auto; justify-items: center; align-content: center; gap: 6px;
-  min-height: 112px; padding: 14px 6px; border-radius: 20px; text-align: center; line-height: 1.1;
+  min-height: 104px; padding: 14px 6px; border-radius: 20px; text-align: center; line-height: 1.1;
   background: var(--fill, var(--bg)); color: var(--text); font-size: 1rem; font-weight: 700;
 }
 .rsvp-ic { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--text) 8%, transparent); }
 .rsvp button .rsvp-ic .icon { width: 20px; height: 20px; }
-.rsvp-count { font-size: 0.8rem; font-weight: 600; color: var(--muted); }
 .rsvp button.selected { background: var(--accent); color: var(--accent-text); font-weight: 800; }
 .rsvp button.selected .rsvp-ic { background: color-mix(in srgb, var(--accent-text) 14%, transparent); }
-.rsvp button.selected .rsvp-count { color: color-mix(in srgb, var(--accent-text) 70%, transparent); }
 
 /* Half width: three equal rows, icon left, count right */
 @container (max-width: 260px) {
@@ -887,8 +885,10 @@ button .icon, .btn .icon { vertical-align: -0.2em; }
   .rsvp-status { font-size: 0.8rem; }
   .rsvp button { grid-template-columns: auto 1fr; padding-right: 10px; }
   .rsvp-label { white-space: nowrap; }
-  .rsvp-count { display: none; }
+  /* Fill the tile when its neighbour is taller: the three answers share the height. */
+  .rsvp { flex: 1; grid-auto-rows: 1fr; }
 }
+.card[data-card="rsvp"] { display: flex; flex-direction: column; }
 
 /* ---------- Plus-ones: who comes with the guest ---------- */
 .plus-ones { margin-top: 12px; padding: 12px; border-radius: 18px; background: var(--fill, var(--bg)); display: grid; gap: 8px; }
