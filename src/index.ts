@@ -162,8 +162,36 @@ async function insertGuest(db: D1Database, eventId: string, name: string, isHost
   };
 }
 
-function publicComment(c: CommentRow) {
-  return { id: c.id, guestId: c.guest_id, name: c.name, body: c.body, createdAt: c.created_at };
+type Like = { guestId: string; name: string; at: string };
+
+function publicComment(c: CommentRow, likes: Like[] = []) {
+  return { id: c.id, guestId: c.guest_id, name: c.name, body: c.body, createdAt: c.created_at, likes };
+}
+
+// Who liked which comment of an event, oldest first. Returns nothing if the
+// comment_likes table isn't there yet (code deployed before migration 0006).
+async function listLikes(db: D1Database, eventId: string): Promise<Map<string, Like[]>> {
+  const byComment = new Map<string, Like[]>();
+  try {
+    const { results } = await db
+      .prepare(
+        `SELECT l.comment_id, l.guest_id, g.name, l.created_at
+         FROM comment_likes l
+         JOIN comments c ON c.id = l.comment_id
+         JOIN guests g ON g.id = l.guest_id
+         WHERE c.event_id = ? ORDER BY l.created_at`,
+      )
+      .bind(eventId)
+      .all<{ comment_id: string; guest_id: string; name: string; created_at: string }>();
+    for (const r of results) {
+      const list = byComment.get(r.comment_id) || [];
+      list.push({ guestId: r.guest_id, name: r.name, at: r.created_at });
+      byComment.set(r.comment_id, list);
+    }
+  } catch (err) {
+    if (!String(err).includes("no such table")) throw err;
+  }
+  return byComment;
 }
 
 // Latest comments, oldest first. Names come from the guests table so renames show up.
@@ -178,7 +206,8 @@ async function listComments(db: D1Database, eventId: string) {
     )
     .bind(eventId)
     .all<CommentRow>();
-  return results.map(publicComment);
+  const likes = await listLikes(db, eventId);
+  return results.map((c) => publicComment(c, likes.get(c.id)));
 }
 
 function publicGuest(g: GuestRow) {
@@ -401,6 +430,24 @@ app.post("/parties/:id/comments", async (c) => {
     .bind(randomId(9), event.id, me.id, text)
     .run();
   return c.json({ comments: await listComments(c.env.DB, event.id) }, 201);
+});
+
+// Like or unlike a comment ({ liked: true | false }).
+app.put("/parties/:id/comments/:commentId/like", async (c) => {
+  const event = await getEvent(c.env.DB, c.req.param("id"));
+  const me = await requireGuest(c, event.id);
+  const commentId = c.req.param("commentId");
+  const row = await c.env.DB.prepare("SELECT id FROM comments WHERE id = ? AND event_id = ?").bind(commentId, event.id).first();
+  if (!row) throw new HttpError(404, "Commentaire introuvable");
+  const liked = (await body(c)).liked !== false;
+  await c.env.DB.prepare(
+    liked
+      ? "INSERT OR IGNORE INTO comment_likes (comment_id, guest_id) VALUES (?, ?)"
+      : "DELETE FROM comment_likes WHERE comment_id = ? AND guest_id = ?",
+  )
+    .bind(commentId, me.id)
+    .run();
+  return c.json({ comments: await listComments(c.env.DB, event.id) });
 });
 
 // GIF search for comments, proxied so the GIPHY key stays secret. A comment stores a GIF

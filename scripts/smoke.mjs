@@ -66,6 +66,18 @@ check("guest cannot delete host's comment", (await call(`/parties/${eventId}/com
 const del = await call(`/parties/${eventId}/comments/${listed.data.comments[0].id}`, { method: "DELETE", token: host.token });
 check("host can delete any comment", del.status === 200 && del.data.comments.length === 1);
 
+// Likes
+const target = (await call(`/parties/${eventId}/comments`, { token: guest.token })).data.comments.at(-1);
+const liked = await call(`/parties/${eventId}/comments/${target.id}/like`, { method: "PUT", body: { liked: true }, token: guest.token });
+const likedC = liked.data.comments.find((c) => c.id === target.id);
+check("guest likes a comment", liked.status === 200 && likedC.likes.length === 1 && likedC.likes[0].name === "Guest" && likedC.likes[0].at);
+await call(`/parties/${eventId}/comments/${target.id}/like`, { method: "PUT", body: { liked: true }, token: guest.token });
+check("liking twice counts once", (await call(`/parties/${eventId}/comments`, { token: host.token })).data.comments.find((c) => c.id === target.id).likes.length === 1);
+const unliked = await call(`/parties/${eventId}/comments/${target.id}/like`, { method: "PUT", body: { liked: false }, token: guest.token });
+check("guest unlikes", unliked.data.comments.find((c) => c.id === target.id).likes.length === 0);
+check("like unknown comment -> 404", (await call(`/parties/${eventId}/comments/nope/like`, { method: "PUT", body: { liked: true }, token: guest.token })).status === 404);
+check("like needs a token", (await call(`/parties/${eventId}/comments/${target.id}/like`, { method: "PUT", body: { liked: true } })).status === 401);
+
 // GIFs: only when the Worker has a GIPHY key (run with scripts/fake-giphy.mjs to test them).
 const gifsOn = (await call(`/parties/${eventId}`, { token: guest.token })).data.gifs;
 if (gifsOn) {
