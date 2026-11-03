@@ -869,6 +869,8 @@ function renderJoin(eventId, preview) {
 
 const RSVP_LABELS = { going: "Je viens", maybe: "Peut-être", not_going: "Je ne peux pas" };
 const RSVP_ICON = { going: "check", maybe: "help", not_going: "x" };
+// Button labels answer the card's question "Vous venez ?", so they stay short and balanced.
+const RSVP_SHORT = { going: "Oui", maybe: "Peut-être", not_going: "Non" };
 
 // Marks a rendered block so live updates can swap it on its own (see patchSpace).
 function live(key, html) {
@@ -965,11 +967,16 @@ function spaceHtml(eventId, data, identity) {
 
     <section data-live="rsvp" data-card="rsvp" class="card">
       <h2>Vous venez&nbsp;?</h2>
-      <div class="rsvp">
-        ${Object.entries(RSVP_LABELS)
+      <p class="rsvp-status">${me.rsvp ? `Votre réponse : <strong>${RSVP_LABELS[me.rsvp]}</strong>` : "Répondez en un geste, vous pourrez changer d'avis."}</p>
+      <div class="rsvp" role="group" aria-label="Votre réponse">
+        ${Object.keys(RSVP_LABELS)
           .map(
-            ([key, label]) =>
-              `<button data-rsvp="${key}" class="${me.rsvp === key ? "selected" : ""}">${icon(RSVP_ICON[key])} <span>${label}</span></button>`,
+            (key) =>
+              `<button data-rsvp="${key}" class="rsvp-${key} ${me.rsvp === key ? "selected" : ""}" aria-pressed="${me.rsvp === key}" aria-label="${RSVP_LABELS[key]}">
+                <span class="rsvp-ic">${icon(RSVP_ICON[key])}</span>
+                <span class="rsvp-label">${RSVP_SHORT[key]}</span>
+                <span class="rsvp-count">${groups[key].length}</span>
+              </button>`,
           )
           .join("")}
       </div>
