@@ -874,6 +874,7 @@ function spaceHtml(eventId, data, identity) {
 
     <section data-card="comments" class="card">
       <h2>💬 Commentaires</h2>
+      <div id="pinned"></div>
       <ul class="comments" id="comments"></ul>
       <form id="comment-form" class="comment-form" autocomplete="off">
         <ul class="mention-list" id="mention-list" role="listbox" hidden></ul>
@@ -1621,6 +1622,7 @@ function captureDraft() {
     end: textarea.selectionEnd,
     focused: document.activeElement === textarea,
     replyTo: space.comments.replyTo(),
+    editing: space.comments.editing(),
     listScroll: space.list?.scrollTop ?? null,
   };
 }
@@ -1628,6 +1630,7 @@ function captureDraft() {
 function restoreDraft(draft) {
   const textarea = plainEditor(document.querySelector("#comment-form .comment-input"));
   if (!textarea) return;
+  if (draft.editing) space.comments.setEdit(draft.editing);
   textarea.value = draft.value;
   if (draft.replyTo) space.comments.setReply(draft.replyTo);
   if (draft.focused) {
@@ -1849,6 +1852,7 @@ async function uploadCommentPicture(eventId, token, file) {
 
 function setupComments(eventId, me, initial, token, guests) {
   const list = document.getElementById("comments");
+  const pinnedBox = document.getElementById("pinned");
   const form = document.getElementById("comment-form");
   const textarea = plainEditor(form.querySelector(".comment-input"));
   const sendBtn = form.querySelector("button[type=submit]");
@@ -1951,7 +1955,7 @@ function setupComments(eventId, me, initial, token, guests) {
     currentComments = comments;
     for (const c of comments) people.set(c.guestId, c.name);
     updateNotifications(comments);
-    const key = comments.map((c) => c.id + c.name + (c.likes || []).map((l) => l.guestId + l.emoji).join("+")).join();
+    const key = comments.map((c) => c.id + c.name + c.editedAt + (c.pinned ? "📌" : "") + c.body.length + (c.likes || []).map((l) => l.guestId + l.emoji).join("+")).join();
     if (key === lastKey) {
       // Same comments: just refresh the "x min ago" labels.
       for (const el of list.querySelectorAll("[data-at]")) el.textContent = formatAgo(el.dataset.at);
@@ -1961,6 +1965,14 @@ function setupComments(eventId, me, initial, token, guests) {
     lastKey = key;
     const names = [...people.values()];
     const byId = new Map(comments.map((c) => [c.id, c]));
+    // The host's pinned message stays above the wall; tapping it jumps to it.
+    const pinned = comments.find((c) => c.pinned);
+    pinnedBox.innerHTML = pinned
+      ? `<button class="pinned" data-goto-comment="${esc(pinned.id)}">
+           <span class="pinned-label">📌 Épinglé · ${esc(pinned.name)}</span>
+           <span class="pinned-text">${esc(quoteText(pinned.body))}</span>
+         </button>`
+      : "";
     list.innerHTML = comments.length
       ? comments
           .map((c) => {
@@ -1978,13 +1990,17 @@ function setupComments(eventId, me, initial, token, guests) {
             const groups = new Map();
             for (const l of likes) groups.set(l.emoji || "❤️", [...(groups.get(l.emoji || "❤️") || []), l.guestId === me.id ? "Vous" : l.name]);
             const likers = likes.map((l) => `${l.guestId === me.id ? "Vous" : l.name} ${l.emoji || "❤️"}`).join(", ");
-            return `<li id="c-${esc(c.id)}" class="${mine ? "mine" : ""} ${tagged ? "tagged" : ""}">
+            return `<li id="c-${esc(c.id)}" class="${mine ? "mine" : ""} ${tagged ? "tagged" : ""} ${c.pinned ? "is-pinned" : ""}">
               ${avatar(c.name)}
               <div class="comment-body">
                 <div class="comment-meta"><strong>${esc(c.name)}</strong>
                   <span class="muted small" data-at="${esc(c.createdAt)}">${esc(formatAgo(c.createdAt))}</span>
+                  ${c.editedAt ? `<span class="muted small edited" title="Modifié">· modifié</span>` : ""}
+                  ${c.pinned ? `<span class="small pin-mark" title="Épinglé">📌</span>` : ""}
                   <span class="comment-actions">
                     ${mine ? "" : `<button class="link small" data-reply="${esc(c.id)}" data-reply-name="${esc(c.name)}">Répondre</button>`}
+                    ${mine && text ? `<button class="link small" data-edit="${esc(c.id)}">Modifier</button>` : ""}
+                    ${me.isHost ? `<button class="link small" data-pin="${esc(c.id)}" data-pinned="${c.pinned ? 1 : ""}">${c.pinned ? "Désépingler" : "Épingler"}</button>` : ""}
                     ${mine || me.isHost ? `<button class="link small delete" data-delete="${esc(c.id)}" aria-label="Supprimer le commentaire">Supprimer</button>` : ""}
                   </span>
                 </div>
@@ -2055,7 +2071,9 @@ function setupComments(eventId, me, initial, token, guests) {
   // "[reply:ID]" first line so everyone sees what it answers.
   const replyBar = document.getElementById("reply-bar");
   let replyTo = null;
+  let editing = null; // the comment being edited, if any
   const setReply = (comment) => {
+    if (comment && editing) setEdit(null);
     replyTo = comment ? comment.id : null;
     replyBar.hidden = !comment;
     replyBar.innerHTML = comment
@@ -2063,8 +2081,32 @@ function setupComments(eventId, me, initial, token, guests) {
          <button type="button" class="link small" id="reply-cancel" aria-label="Annuler la réponse">✕</button>`
       : "";
   };
+  // Editing loads the comment's text into the box; its GIFs, pictures and the
+  // message it answers are kept as they are.
+  function setEdit(comment) {
+    const wasEditing = editing;
+    editing = comment ? comment.id : null;
+    if (comment) {
+      replyTo = null;
+      replyBar.hidden = false;
+      replyBar.classList.add("editing");
+      replyBar.innerHTML = `<span class="reply-label"><span>✏️ Modification de votre commentaire</span><span class="muted">${esc(quoteText(comment.body))}</span></span>
+         <button type="button" class="link small" id="reply-cancel" aria-label="Annuler la modification">✕</button>`;
+      textarea.value = parseComment(comment.body).text;
+    } else {
+      replyBar.classList.remove("editing");
+      if (!replyTo) {
+        replyBar.hidden = true;
+        replyBar.innerHTML = "";
+      }
+      if (wasEditing) textarea.value = "";
+    }
+    sendBtn.textContent = comment ? "Enregistrer" : "Envoyer";
+  }
   replyBar.addEventListener("click", (ev) => {
-    if (ev.target.closest("#reply-cancel")) setReply(null);
+    if (!ev.target.closest("#reply-cancel")) return;
+    if (editing) setEdit(null);
+    else setReply(null);
   });
 
   const reply = (commentId) => {
@@ -2075,9 +2117,38 @@ function setupComments(eventId, me, initial, token, guests) {
     form.scrollIntoView({ block: "nearest", behavior: "smooth" });
   };
 
+  pinnedBox.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-goto-comment]");
+    const target = btn && document.getElementById(`c-${btn.dataset.gotoComment}`);
+    if (!target) return;
+    target.scrollIntoView({ block: "center", behavior: "smooth" });
+    target.classList.remove("flash");
+    void target.offsetWidth;
+    target.classList.add("flash");
+  });
+
   list.addEventListener("click", async (ev) => {
     const replyBtn = ev.target.closest("[data-reply]");
     if (replyBtn) return reply(replyBtn.dataset.reply);
+    const editBtn = ev.target.closest("[data-edit]");
+    if (editBtn) {
+      const comment = currentComments.find((c) => c.id === editBtn.dataset.edit);
+      if (!comment) return;
+      setEdit(comment);
+      textarea.focus();
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+      form.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      return;
+    }
+    const pinBtn = ev.target.closest("[data-pin]");
+    if (pinBtn) {
+      return withBusy(pinBtn, async () => {
+        const pinned = !pinBtn.dataset.pinned;
+        const { comments } = await api(`/parties/${eventId}/comments/${pinBtn.dataset.pin}/pin`, { method: "PUT", body: { pinned }, token });
+        draw(comments);
+        toast(pinned ? "📌 Message épinglé en haut des commentaires" : "Message désépinglé");
+      });
+    }
     const quoteBtn = ev.target.closest("[data-goto-comment]");
     if (quoteBtn) {
       const target = document.getElementById(`c-${quoteBtn.dataset.gotoComment}`);
@@ -2256,8 +2327,26 @@ function setupComments(eventId, me, initial, token, guests) {
       for (const pic of pending) lines.push(await uploadCommentPicture(eventId, token, pic.file));
       body = [body, ...lines].filter(Boolean).join("\n");
     }
-    if (replyTo) body = `[reply:${replyTo}]\n${body}`;
-    const { comments } = await api(`/parties/${eventId}/comments`, { method: "POST", body: { body }, token });
+    let comments;
+    const original = editing && currentComments.find((c) => c.id === editing);
+    if (original) {
+      // Keep what the text box doesn't show: the quoted message, GIFs and pictures.
+      const old = parseComment(original.body);
+      body = [
+        old.replyTo ? `[reply:${old.replyTo}]` : "",
+        body,
+        ...old.gifs.map((id) => `[gif:${id}]`),
+        ...old.pics.map((p) => `[img:${p.id}:${p.width}x${p.height}]`),
+      ]
+        .filter(Boolean)
+        .join("\n");
+      ({ comments } = await api(`/parties/${eventId}/comments/${original.id}`, { method: "PATCH", body: { body }, token }));
+      setEdit(null);
+    } else {
+      if (editing) setEdit(null); // the comment was deleted meanwhile: post it as new
+      if (replyTo) body = `[reply:${replyTo}]\n${body}`;
+      ({ comments } = await api(`/parties/${eventId}/comments`, { method: "POST", body: { body }, token }));
+    }
     textarea.value = "";
     setReply(null);
     clearPics();
@@ -2386,6 +2475,11 @@ function setupComments(eventId, me, initial, token, guests) {
       draw(comments);
     },
     replyTo: () => replyTo,
+    editing: () => editing,
+    setEdit(id) {
+      const comment = currentComments.find((c) => c.id === id);
+      if (comment) setEdit(comment);
+    },
     setReply(id) {
       const comment = currentComments.find((c) => c.id === id);
       if (comment) setReply(comment);

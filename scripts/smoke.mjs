@@ -85,6 +85,22 @@ check("non-emoji reaction rejected", (await call(`/parties/${eventId}/comments/$
 check("like unknown comment -> 404", (await call(`/parties/${eventId}/comments/nope/like`, { method: "PUT", body: { liked: true }, token: guest.token })).status === 404);
 check("like needs a token", (await call(`/parties/${eventId}/comments/${target.id}/like`, { method: "PUT", body: { liked: true } })).status === 401);
 
+// Editing and pinning
+{
+  const edited = await call(`/parties/${eventId}/comments/${target.id}`, { method: "PATCH", body: { body: "Salut, modifié" }, token: host.token });
+  const after = edited.data.comments?.find((c) => c.id === target.id);
+  check("author edits a comment", edited.status === 200 && after?.body === "Salut, modifié" && !!after.editedAt);
+  check("others cannot edit it", (await call(`/parties/${eventId}/comments/${target.id}`, { method: "PATCH", body: { body: "x" }, token: guest.token })).status === 403);
+  check("empty edit rejected", (await call(`/parties/${eventId}/comments/${target.id}`, { method: "PATCH", body: { body: " " }, token: host.token })).status === 400);
+  check("guest cannot pin", (await call(`/parties/${eventId}/comments/${target.id}/pin`, { method: "PUT", body: { pinned: true }, token: guest.token })).status === 403);
+  const pinned = await call(`/parties/${eventId}/comments/${target.id}/pin`, { method: "PUT", body: { pinned: true }, token: host.token });
+  check("host pins a comment", pinned.data.comments?.filter((c) => c.pinned).map((c) => c.id).join() === target.id);
+  check("pin shows for guests", (await call(`/parties/${eventId}`, { token: guest.token })).data.comments.find((c) => c.id === target.id)?.pinned === true);
+  const unpinned = await call(`/parties/${eventId}/comments/${target.id}/pin`, { method: "PUT", body: { pinned: false }, token: host.token });
+  check("host unpins it", unpinned.status === 200 && !unpinned.data.comments.some((c) => c.pinned));
+  check("pin unknown comment -> 404", (await call(`/parties/${eventId}/comments/nope/pin`, { method: "PUT", body: { pinned: true }, token: host.token })).status === 404);
+}
+
 // Pictures in comments (R2)
 {
   const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1]);

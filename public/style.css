@@ -593,3 +593,14 @@ button.link.remove-guest { color: #e5484d; margin-top: 18px; }
 .comment-pics a { display: block; border-radius: 10px; overflow: hidden; background: var(--accent-soft); }
 .comment-pics img { display: block; width: 100%; height: auto; }
 .comment-pics.multi img { aspect-ratio: 1; object-fit: cover; height: 100%; }
+
+/* Pinned message and edits */
+.comment-meta { flex-wrap: wrap; row-gap: 2px; }
+.comment-meta .edited { font-style: italic; }
+#pinned:empty { display: none; }
+#pinned { margin-bottom: 10px; }
+.pinned { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 8px 12px; text-align: left; border: 1px solid var(--accent); border-radius: 12px; background: var(--accent-soft); color: inherit; font-weight: 400; line-height: 1.35; }
+.pinned-label { font-size: 0.8rem; font-weight: 700; color: var(--accent); }
+.pinned-text { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.9rem; }
+.comments li.is-pinned { border-color: var(--accent); }
+.reply-bar.editing { border-left-color: #f59e0b; }
