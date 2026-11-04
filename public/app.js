@@ -452,7 +452,7 @@ function applyColor(value) {
   applyCardStyles(parseStyle(value).cards);
   const c = parseColor(value);
   document.body.classList.toggle("light-ui", !!c && !isDark(c.card));
-  if (!c) return;
+  if (!c) return syncPageEdge();
   const text = isDark(c.card) ? "#f3efff" : "#1b1033";
   style.setProperty("--accent", c.accent);
   style.setProperty("--accent-text", isDark(c.accent) ? "#ffffff" : "#1b1033");
@@ -465,6 +465,67 @@ function applyColor(value) {
   style.setProperty("--fill", `color-mix(in srgb, ${text} 5%, ${c.card})`);
   style.setProperty("--page-text", isDark(c.bg) ? "#f3efff" : "#1b1033");
   style.setProperty("color-scheme", isDark(c.card) ? "dark" : "light");
+  syncPageEdge();
+}
+
+// "#rrggbb" mixed with another color (t = share of the other one, 0..1).
+function mixHex(hex, other, t) {
+  const ch = (h, i) => parseInt(h.slice(i, i + 2), 16);
+  return "#" + [1, 3, 5].map((i) => Math.round(ch(hex, i) * (1 - t) + ch(other, i) * t).toString(16).padStart(2, "0")).join("");
+}
+
+// A page background that belongs with the cards: the card color, slightly deeper (like the built-in themes).
+function matchingBg(c) {
+  return isDark(c.card) ? mixHex(c.card, "#000000", 0.4) : mixHex(mixHex(c.card, "#000000", 0.05), c.accent, 0.05);
+}
+
+// The average color of the background photo, so the page edges (phone status and navigation bars,
+// overscroll) melt into the blurred picture instead of showing the plain page color.
+const photoTints = new Map();
+let bgUrl = null;
+function loadPhotoTint(url) {
+  if (photoTints.has(url)) return;
+  photoTints.set(url, null);
+  const img = new Image();
+  img.onload = () => {
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 24;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      ctx.filter = "saturate(1.3)"; // like the blurred backdrop
+      ctx.drawImage(img, 0, 0, 24, 24);
+      const px = ctx.getImageData(0, 0, 24, 24).data;
+      const sum = [0, 0, 0];
+      for (let i = 0; i < px.length; i += 4) for (let k = 0; k < 3; k++) sum[k] += px[i + k];
+      const n = px.length / 4;
+      photoTints.set(url, "#" + sum.map((v) => Math.round(v / n).toString(16).padStart(2, "0")).join(""));
+      if (url === bgUrl) syncPageEdge();
+    } catch {}
+  };
+  img.src = url;
+}
+
+// Paints what is around the page (canvas, theme-color) to match what is on screen:
+// the darkened photo when there is one, else the page background.
+function syncPageEdge() {
+  const tint = bgUrl && photoTints.get(bgUrl);
+  const root = document.documentElement.style;
+  let top;
+  if (tint) {
+    // Same darkening as the gradient over the photo: 15% at the top, 45% at the bottom.
+    top = mixHex(tint, "#000000", 0.15);
+    root.setProperty("--photo-bg", mixHex(tint, "#000000", 0.45));
+  } else {
+    root.removeProperty("--photo-bg");
+    top = getComputedStyle(document.body).getPropertyValue("--bg").trim() || "#111014";
+  }
+  let meta = document.querySelector('meta[name="theme-color"]');
+  if (!meta) {
+    meta = document.createElement("meta");
+    meta.name = "theme-color";
+    document.head.append(meta);
+  }
+  meta.content = top;
 }
 
 // ---------- background picture ----------
@@ -477,8 +538,12 @@ function backgroundUrl(eventId, version) {
 function setBackground(eventId, version) {
   const on = !!(eventId && version);
   document.body.classList.toggle("has-bg", on);
-  if (on) document.body.style.setProperty("--bg-image", `url("${backgroundUrl(eventId, version)}")`);
-  else document.body.style.removeProperty("--bg-image");
+  bgUrl = on ? backgroundUrl(eventId, version) : null;
+  if (on) {
+    document.body.style.setProperty("--bg-image", `url("${bgUrl}")`);
+    loadPhotoTint(bgUrl);
+  } else document.body.style.removeProperty("--bg-image");
+  syncPageEdge();
 }
 
 // Shrinks a photo to at most 1600px and re-encodes it as JPEG (well under 1 MB).
@@ -678,6 +743,14 @@ function setupBackgroundControl(eventId, token) {
       preview();
     });
   }
+  // Picks a page background that goes with the current cards and accent.
+  document.getElementById("bg-match").addEventListener("click", (ev) => {
+    ev.preventDefault(); // don't open the color input of the label
+    const current = Object.fromEntries(inputs.map((i) => [i.dataset.key, i.value.toLowerCase()]));
+    inputs.find((i) => i.dataset.key === "bg").value = matchingBg(current);
+    style = { ...style, custom: Object.fromEntries(inputs.map((i) => [i.dataset.key, i.value.toLowerCase()])) };
+    preview();
+  });
   const saveAll = document.getElementById("color-save");
   saveAll.addEventListener("click", () => save(saveAll));
 
@@ -1180,9 +1253,12 @@ function spaceHtml(eventId, data, identity) {
               ]
                 .map(
                   ([key, label]) =>
-                    `<label><input type="color" data-key="${key}" value="${(style.custom || COLORS[style.theme])[key]}"> ${label}</label>`,
+                    `<label ${key === "bg" ? `class="bg-row"` : ""}><input type="color" data-key="${key}" value="${(style.custom || COLORS[style.theme])[key]}"> ${label}${
+                      key === "bg" ? `<button type="button" class="link small" id="bg-match">Assortir</button>` : ""
+                    }</label>`,
                 )
                 .join("")}
+              ${event.background_version ? `<p class="muted small bg-auto">${icon("image")} Fond de la page assorti à la photo</p>` : ""}
             </div>
             <button class="primary" id="color-save">Enregistrer</button>
           </div>
