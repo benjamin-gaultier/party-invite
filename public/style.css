@@ -311,6 +311,10 @@ body:has(.bg-control) .toast { bottom: calc(80px + env(safe-area-inset-bottom));
 .swatches { display: grid; grid-template-columns: repeat(5, 40px); gap: 10px; margin-bottom: 14px; }
 .custom-colors { display: grid; gap: 8px; margin-bottom: 12px; }
 .custom-colors label { flex-direction: row; align-items: center; gap: 10px; font-size: 0.95rem; }
+.custom-colors .bg-row #bg-match { margin-left: auto; min-height: 0; padding: 4px 0; }
+/* With a photo the page color only shows at the edges, and those follow the photo. */
+body.has-bg .custom-colors .bg-row { display: none; }
+.bg-auto { display: flex; align-items: center; gap: 8px; margin: 0; }
 .custom-colors input[type="color"] { width: 44px !important; height: 32px; padding: 2px; border-radius: 8px; flex: none; cursor: pointer; }
 #color-save { width: 100%; }
 /* Per-card style: small "Aa" button on each card (hosts), opening a bottom sheet. */
@@ -932,3 +936,6 @@ button .icon, .btn .icon { vertical-align: -0.2em; }
   .plus-hint { font-size: 0.75rem; }
   .plus-setting span { display: none; }
 }
+
+/* Around the page (overscroll, phone navigation bar): the darkened photo color, not the plain page color. */
+body.has-bg { background: var(--photo-bg, var(--bg)); }
