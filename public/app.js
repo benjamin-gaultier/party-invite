@@ -3014,5 +3014,43 @@ document.addEventListener("click", (ev) => {
   ev.preventDefault();
   navigate(a.getAttribute("href"));
 });
+// Big titles (the event name) shrink so their longest word fits the card: a single long word
+// like "Frenchification" can't wrap, and some fonts or phone text-size settings make it too wide.
+// CSS breaks the word as a last resort (overflow-wrap), so turn that off while measuring.
+const MIN_TITLE_PX = 20;
+function fitTitles() {
+  for (const h of document.querySelectorAll(".event-hero h1, .hero h1")) {
+    h.style.fontSize = "";
+    h.style.overflowWrap = "normal";
+    const avail = h.getBoundingClientRect().width;
+    // At min-content width the heading is as wide as its longest word, measured to the subpixel.
+    h.style.width = "min-content";
+    h.style.maxWidth = "none";
+    // Width isn't exactly proportional to size (variable fonts adapt their shape), so re-check a few times.
+    for (let i = 0; i < 8 && avail; i++) {
+      const needed = h.getBoundingClientRect().width;
+      if (needed <= avail - 1) break;
+      const size = parseFloat(getComputedStyle(h).fontSize);
+      if (size <= MIN_TITLE_PX) break;
+      const next = Math.min(size - 0.5, (size * (avail - 2)) / needed);
+      h.style.fontSize = `${Math.max(MIN_TITLE_PX, Math.floor(next * 10) / 10)}px`;
+    }
+    h.style.width = h.style.maxWidth = h.style.overflowWrap = "";
+  }
+}
+let fitQueued = false;
+function queueFitTitles() {
+  if (fitQueued) return;
+  fitQueued = true;
+  requestAnimationFrame(() => {
+    fitQueued = false;
+    fitTitles();
+  });
+}
+new MutationObserver(queueFitTitles).observe(app, { childList: true, subtree: true, characterData: true });
+new MutationObserver(queueFitTitles).observe(document.head, { childList: true, subtree: true, characterData: true }); // card fonts
+window.addEventListener("resize", queueFitTitles);
+document.fonts?.addEventListener?.("loadingdone", queueFitTitles);
+
 window.addEventListener("popstate", route);
 route();
