@@ -908,9 +908,9 @@ function plusOnesHtml(data) {
       <div class="plus-row">
         <span class="plus-label">${icon("userPlus")}<span>${n ? `Avec ${plural(n, "personne")}` : "Avec quelqu'un&nbsp;?"}</span></span>
         <div class="stepper" role="group" aria-label="Nombre d'accompagnants">
-          <button type="button" data-plus="-1" aria-label="Une personne de moins" ${n ? "" : "disabled"}>${icon("minus")}</button>
+          <button type="button" data-plus="-1" aria-label="Une personne de moins" ${n ? "" : "disabled data-off"}>${icon("minus")}</button>
           <output aria-live="polite">+${n}</output>
-          <button type="button" data-plus="1" aria-label="Une personne de plus" ${n >= limit ? "disabled" : ""}>${icon("plus")}</button>
+          <button type="button" data-plus="1" aria-label="Une personne de plus" ${n >= limit ? "disabled data-off" : ""}>${icon("plus")}</button>
         </div>
       </div>
       ${
@@ -1263,14 +1263,7 @@ function bindLive(key) {
   }
   if (key === "rsvp") {
     for (const btn of el.querySelectorAll("[data-rsvp]")) {
-      btn.addEventListener("click", () =>
-        withBusy(btn, async () => {
-          const before = space.data.me.rsvp;
-          const next = await api(`/parties/${eventId}/rsvp`, { method: "PUT", body: { status: btn.dataset.rsvp }, token });
-          if (btn.dataset.rsvp === "going" && before !== "going") confetti(btn);
-          renderSpace(eventId, next);
-        }),
-      );
+      btn.addEventListener("click", () => setRsvp(btn.dataset.rsvp, btn));
     }
     for (const btn of el.querySelectorAll("[data-plus]")) {
       btn.addEventListener("click", () =>
@@ -1291,6 +1284,58 @@ function bindLive(key) {
     }
     el.querySelector("#plus-names")?.addEventListener("click", () => plusOnesDialog(eventId, token));
   }
+}
+
+// ---------- RSVP, optimistic ----------
+// A tap shows the new answer at once (button, guest list, headcount); the server is told
+// in the background. Taps made while a request is on its way are merged: only the last
+// answer is sent next, so the server always ends on what was tapped last. If the server
+// says no, we go back to the last answer it accepted.
+
+const rsvp = { pending: false, wanted: null, confirmed: null, changes: 0 };
+
+// The event data as it looks with my answer set to `status` (and my plus-ones, if given).
+function withMyRsvp(data, status, plusOnes) {
+  const set = (g) => ({ ...g, rsvp: status, plusOnes: plusOnes ?? (status === "not_going" ? [] : g.plusOnes) });
+  return { ...data, me: set(data.me), guests: (data.guests || []).map((g) => (g.id === data.me.id ? set(g) : g)) };
+}
+
+function setRsvp(status, btn) {
+  if (!space) return;
+  const { eventId, token } = space;
+  const before = space.data.me.rsvp;
+  if (status === before) return;
+  if (!rsvp.pending) rsvp.confirmed = { rsvp: before, plusOnes: space.data.me.plusOnes || [] };
+  rsvp.wanted = status;
+  rsvp.changes++;
+  patchSpace(withMyRsvp(space.data, status), "rsvp");
+  if (status === "going") confetti(app.querySelector(`[data-rsvp="going"]`) || btn);
+  if (rsvp.pending) return; // sent as soon as the current request is back
+  sendRsvp(eventId, token);
+}
+
+async function sendRsvp(eventId, token) {
+  rsvp.pending = true;
+  let failed = null;
+  let last = null;
+  while (rsvp.wanted && rsvp.wanted !== rsvp.confirmed.rsvp) {
+    const status = rsvp.wanted;
+    try {
+      last = await api(`/parties/${eventId}/rsvp`, { method: "PUT", body: { status }, token });
+      rsvp.confirmed = { rsvp: last.me.rsvp, plusOnes: last.me.plusOnes || [] };
+    } catch (err) {
+      failed = err;
+      break;
+    }
+  }
+  rsvp.pending = false;
+  rsvp.wanted = null;
+  rsvp.changes++; // anything fetched before now is stale
+  if (space?.eventId !== eventId) return;
+  if (failed) {
+    toast(failed.message);
+    patchSpace(withMyRsvp(space.data, rsvp.confirmed.rsvp, rsvp.confirmed.plusOnes), "rsvp");
+  } else if (last) patchSpace(last, "rsvp");
 }
 
 // Everything outside the live blocks: share box, comment box, host controls…
@@ -1809,9 +1854,12 @@ async function liveTick() {
   if (!liveOnScreen() || document.hidden || liveBusy) return;
   liveBusy = true;
   const { eventId, token } = space;
+  const changes = rsvp.changes;
   try {
     const data = await api(`/parties/${eventId}`, { token });
     if (!liveOnScreen() || space.eventId !== eventId) return;
+    // My answer changed while this was loading: these data may not have it yet.
+    if (rsvp.pending || changes !== rsvp.changes) return;
     if (data.preview) return renderEvent(eventId); // we were removed from the guest list
     space.comments.update(data.comments || [], data.guests || []);
     patchSpace(data);
@@ -1851,7 +1899,8 @@ function liveParts(html) {
 function inUse(el) {
   const a = document.activeElement;
   if (a && a !== document.body && el.contains(a) && a.matches("input, textarea, select, [contenteditable]")) return true;
-  if ([...el.querySelectorAll("button")].some((b) => b.disabled)) return true; // request on its way
+  // A request on its way (data-off: a button that is simply unavailable, like "-" at zero).
+  if ([...el.querySelectorAll("button:not([data-off])")].some((b) => b.disabled)) return true;
   const search = el.querySelector("#song-search input");
   return !!(search && search.value.trim());
 }
@@ -1861,7 +1910,8 @@ function previewing() {
   return ["color-picker", "card-style"].some((id) => document.getElementById(id)?.hidden === false);
 }
 
-function patchSpace(data) {
+// `force`: a block the person just changed themselves, swapped even while in use.
+function patchSpace(data, force) {
   const { eventId } = space;
   const identity = getIdentity(eventId);
   if (!identity) return;
@@ -1877,7 +1927,7 @@ function patchSpace(data) {
       if (!key || part.html === prev.get(key).html) continue;
       const old = app.querySelector(`[data-live="${key}"]`);
       if (!old) continue;
-      if (inUse(old)) {
+      if (key !== force && inUse(old)) {
         part.html = prev.get(key).html; // try again next tick
         continue;
       }
